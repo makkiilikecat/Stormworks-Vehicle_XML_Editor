@@ -1,0 +1,9 @@
+body {
+    margin: 0;
+    overflow: hidden; /* スクロールバーを消す */
+    background-color: #f0f0f0;
+}
+
+canvas {
+    display: block; /* canvas下の余白を消す */
+}

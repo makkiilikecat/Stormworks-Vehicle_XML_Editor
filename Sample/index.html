@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stormworks Block Viewer (Multi-Block Sample)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; }
+        canvas { display: block; }
+        #controlsContainer {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: sans-serif;
+            color: #333;
+            z-index: 100;
+        }
+        #controlsContainer label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        #controlsContainer input[type="range"] {
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controlsContainer">
+        <label for="blockCountSlider">ブロック数: <span id="blockCountValue">100</span></label>
+        <input type="range" id="blockCountSlider" min="10" max="10000" value="100" step="10">
+        <div>(マウス: 回転/パン/ズーム)</div>
+    </div>
+    <canvas id="viewerCanvas"></canvas>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 定数 ---
+        const BLOCK_SIZE_METERS = 0.25; // 1ブロック = 0.25m
+        const PLACEMENT_RANGE = 5; // ブロック配置範囲 (+/- 5m)
+
+        // --- グローバル変数 ---
+        let scene, camera, renderer, controls;
+        let blockGroup = new THREE.Group(); // ブロックをまとめるグループ
+        const blockGeometry = new THREE.BoxGeometry(BLOCK_SIZE_METERS, BLOCK_SIZE_METERS, BLOCK_SIZE_METERS);
+        const blockMaterial = new THREE.MeshStandardMaterial({ color: 0xffa500 }); // オレンジ色
+
+        // --- UI要素 ---
+        const slider = document.getElementById('blockCountSlider');
+        const countValueSpan = document.getElementById('blockCountValue');
+
+        // --- 初期化 ---
+        function init() {
+            // シーン
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xcccccc);
+
+            // カメラ
+            camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+            camera.position.set(PLACEMENT_RANGE / 2, PLACEMENT_RANGE / 2, PLACEMENT_RANGE * 1.5);
+
+            // レンダラー
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('viewerCanvas'), antialias: true });
+            renderer.setSize( window.innerWidth, window.innerHeight );
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            // コントロール
+            controls = new OrbitControls( camera, renderer.domElement );
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false;
+            controls.maxDistance = PLACEMENT_RANGE * 5;
+            controls.target.set(0, 0, 0); // 注視点を原点に
+
+            // 光源
+            const ambientLight = new THREE.AmbientLight( 0xffffff, 0.6 );
+            scene.add( ambientLight );
+            const directionalLight = new THREE.DirectionalLight( 0xffffff, 1.0 );
+            directionalLight.position.set( 5, 10, 7.5 );
+            scene.add( directionalLight );
+
+            // グリッドヘルパー
+            const gridHelper = new THREE.GridHelper( PLACEMENT_RANGE * 2, PLACEMENT_RANGE * 2 / BLOCK_SIZE_METERS, 0x888888, 0xcccccc );
+            scene.add( gridHelper );
+            // const axesHelper = new THREE.AxesHelper( 1 );
+            // scene.add( axesHelper );
+
+            // ブロック用グループをシーンに追加
+            scene.add(blockGroup);
+
+            // イベントリスナー
+            slider.addEventListener('input', onSliderChange);
+            window.addEventListener('resize', onWindowResize, false);
+
+            // 初期ブロック生成
+            createBlocks(parseInt(slider.value, 10));
+            countValueSpan.textContent = slider.value;
+
+            // アニメーション開始
+            animate();
+        }
+
+        // --- ブロック生成 ---
+        function createBlocks(count) {
+            // 既存のブロックをクリア
+            clearBlocks();
+
+            console.time(`Creating ${count} blocks`); // 計測開始
+
+            // 新しいブロックを生成してグループに追加
+            for (let i = 0; i < count; i++) {
+                // ★非効率な方法: ループ内でジオメトリとマテリアルを使い回すが、Meshは毎回生成
+                const block = new THREE.Mesh(blockGeometry, blockMaterial);
+
+                // ランダムな位置に配置
+                block.position.set(
+                    (Math.random() - 0.5) * PLACEMENT_RANGE * 2,
+                    (Math.random() - 0.5) * PLACEMENT_RANGE * 2,
+                    (Math.random() - 0.5) * PLACEMENT_RANGE * 2
+                );
+
+                // 回転やスケールは標準のまま
+                block.rotation.set(0, 0, 0);
+                block.scale.set(1, 1, 1);
+
+                blockGroup.add(block);
+            }
+            console.timeEnd(`Creating ${count} blocks`); // 計測終了
+        }
+
+        // --- ブロッククリア ---
+        function clearBlocks() {
+            // グループ内のすべての子（メッシュ）を削除
+            // 逆順ループで削除するのが安全
+            for (let i = blockGroup.children.length - 1; i >= 0; i--) {
+                const object = blockGroup.children[i];
+                // Mesh以外が含まれる可能性も考慮 (今回はMeshのみだが念のため)
+                if (object.isMesh) {
+                    // ジオメトリとマテリアルは使い回しているのでdisposeしない
+                    // もしループ内で毎回newしていたらdisposeが必要
+                    // object.geometry.dispose();
+                    // object.material.dispose();
+                }
+                blockGroup.remove(object);
+            }
+            // console.log("Blocks cleared");
+        }
+
+
+        // --- イベントハンドラ ---
+        function onSliderChange() {
+            const count = parseInt(slider.value, 10);
+            countValueSpan.textContent = count;
+            // スライダーを動かしている間、毎回ブロックを生成し直す
+             // debounce/throttle を入れると操作性が向上するが、今回はそのまま
+            createBlocks(count);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize( window.innerWidth, window.innerHeight );
+        }
+
+        // --- アニメーションループ ---
+        function animate() {
+            requestAnimationFrame( animate );
+            controls.update();
+            renderer.render( scene, camera );
+        }
+
+        // --- 実行 ---
+        init();
+
+    </script>
+</body>
+</html>
