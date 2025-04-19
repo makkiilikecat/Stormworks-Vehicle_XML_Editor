@@ -8,20 +8,22 @@ export const blockGeometry = new THREE.BoxGeometry(
 );
 
 // --- マテリアル定義 ---
-const createMaterial = (color, opacity = 1) => {
+const createMaterial = (color, opacity = 1, wireframe = false) => {
     return new THREE.MeshStandardMaterial({
         color: color,
         metalness: 0.3,
         roughness: 0.6,
         opacity: opacity,
         transparent: opacity < 1,
-        side: THREE.DoubleSide // 反転対応
+        side: THREE.DoubleSide, // 反転対応
+        wireframe: wireframe 
     });
 };
 
 export const normalMaterial = createMaterial(0xffa500); // 通常
 export const previewMaterial = createMaterial(0xffcc66, 0.6); // プレビュー
 export const selectedMaterial = createMaterial(0x00ff00); // ★選択中 (緑)
+export const faceHighlightMaterial = createMaterial(0xffff00, 0.5);
 
 // --- ヘルパー関数 ---
 /**

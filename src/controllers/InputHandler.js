@@ -3,13 +3,22 @@ import * as THREE from 'three';
 import { getPreviewPosition, getPreviewOrientationMatrix, updatePreviewBlock, rotatePreview, flipPreview, setPreviewVisible } from './PreviewController.js';
 import { addBlock, removeBlock, getAllMeshes } from '../models/BlockDataManager.js'; // DataManager利用
 import { setDeleteMode, isDeleteModeActive, setXmlEditMode, isXmlEditModeActive, setSelectedBlockId, getSelectedBlockId } from '../app/AppState.js';
-import { selectBlockByRaycast } from './SelectionController.js';
-import { handleRotationInput as handleBlockRotation } from './BlockTransformController.js'; // 配置済みブロック回転
 import { raycastFromMouse } from '../services/RaycastService.js'; // Raycastサービス利用
 import { X_AXIS, Y_AXIS, Z_AXIS, ROTATION_ANGLE } from '../app/Constants.js';
+import { selectBlockByRaycast, highlightHoveredFace, clearFaceHighlight } from './SelectionController.js'; // 面ハイライト関連追加
+import { handleRotationInput as handleBlockRotation, stretchBlock, shearBlock } from './BlockTransformController.js'; // stretch/shear追加
 
 let isMouseOverCanvas = false;
-export const mouse = new THREE.Vector2(); // Raycasting用マウス座標
+const mouse = new THREE.Vector2(); // Raycasting用マウス座標
+
+const dragState = {
+    isDragging: false,
+    startCoords: new THREE.Vector2(),
+    targetBlockId: null,
+    targetFaceNormal: new THREE.Vector3(),
+    targetPoint: new THREE.Vector3(), // ドラッグ開始点のワールド座標
+    isCtrlPressed: false,
+};
 
 /**
  * InputHandlerを初期化し、イベントリスナーを設定します。
@@ -18,29 +27,56 @@ export const mouse = new THREE.Vector2(); // Raycasting用マウス座標
 export function initInputHandler(domElement) {
     domElement.addEventListener('mousemove', onMouseMove);
     domElement.addEventListener('pointerdown', onPointerDown);
-    domElement.addEventListener('mouseenter', () => { isMouseOverCanvas = true; });
-    domElement.addEventListener('mouseleave', onMouseLeave);
+     // ★追加: ドラッグ中の移動と終了を捕捉
+    domElement.addEventListener('pointermove', onPointerMove);
+    domElement.addEventListener('pointerup', onPointerUp);
+    domElement.addEventListener('mouseleave', onMouseLeave); // ドラッグ中に外れた場合も考慮
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp); // ★追加: Ctrlキー離したのを検知
+    console.log("InputHandler initialized.");
     console.log("InputHandler initialized.");
 }
 
 function onMouseMove(event) {
-    isMouseOverCanvas = true; // マウスが乗ったらフラグON
-    // Raycasting用のマウス座標を更新
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    // プレビュー位置更新は animate ループに任せる
+    isMouseOverCanvas = true;
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    mouse.x = (clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+
+    // ★ XML編集モードでなければ面ハイライトは行わない
+    if (isXmlEditModeActive() && getSelectedBlockId() && !dragState.isDragging) {
+        highlightHoveredFace(mouse); // カーソル下の面をハイライト
+    } else {
+        clearFaceHighlight(); // ドラッグ中やモード外は消す
+    }
 }
 
 function onPointerDown(event) {
     if (event.button !== 0) return; // 左クリックのみ
+    dragState.startCoords.copy(mouse); // ドラッグ開始座標記録
+    dragState.isCtrlPressed = event.ctrlKey; // Ctrlキー状態記録
 
     if (isDeleteModeActive()) {
         handleDeleteClick();
     } else if (isXmlEditModeActive()) {
-        selectBlockByRaycast(mouse); // XML編集モード中はクリックで選択/解除
+        // XML編集モード: 面ドラッグ開始 or 選択/解除
+        const intersectInfo = highlightHoveredFace(mouse); // ハイライトしつつ情報を取得
+        if (intersectInfo && intersectInfo.object.userData.blockId === getSelectedBlockId()) {
+            // 選択中のブロックのハイライトされた面をクリックした場合 -> ドラッグ開始
+            dragState.isDragging = true;
+            dragState.targetBlockId = getSelectedBlockId();
+            dragState.targetFaceNormal.copy(intersectInfo.faceNormal);
+            dragState.targetPoint.copy(intersectInfo.point);
+            // カーソル変更などドラッグ中の見た目変更
+            document.body.style.cursor = 'grabbing';
+            clearFaceHighlight(); // ドラッグ開始したら面ハイライトは消す
+        } else {
+            // 面以外をクリック or 別のブロックをクリック -> 選択/解除
+            selectBlockByRaycast(mouse);
+        }
     } else {
-        handleNormalModeClick();
+        handleNormalModeClick(); // 通常モード処理
     }
 }
 
@@ -68,6 +104,46 @@ function handleDeleteClick() {
     }
 }
 
+// ★追加: ドラッグ中の処理
+function onPointerMove(event) {
+    if (!dragState.isDragging || !dragState.targetBlockId) return;
+
+    const currentMouse = new THREE.Vector2(
+        (event.clientX / window.innerWidth) * 2 - 1,
+        -(event.clientY / window.innerHeight) * 2 + 1
+    );
+    // TODO: マウス移動量から適切な dragAmount や dragVector を計算
+    // この計算は複雑になるため、別途関数化推奨
+    const dragDelta = currentMouse.clone().sub(dragState.startCoords);
+
+    if (dragState.isCtrlPressed) { // Ctrl+ドラッグ = Stretch
+        // マウスの上下移動量(deltaY)を dragAmount に変換 (感度調整必要)
+        const dragAmount = -dragDelta.y * 0.5; // Y下向きが正なので反転、係数は調整
+        stretchBlock(dragState.targetBlockId, dragState.targetFaceNormal, dragAmount);
+    } else { // 通常ドラッグ = Shear
+        // ★マウス移動ベクトルをワールド平面に投影し、ローカル座標でのずれベクトルを計算する
+        // この部分はRaycastや投影計算が必要で複雑
+        // 仮実装: マウス移動量をそのまま使う（不正確）
+        const dragVectorWorld = new THREE.Vector3(dragDelta.x, 0, -dragDelta.y).multiplyScalar(0.5); // 仮
+        shearBlock(dragState.targetBlockId, dragState.targetFaceNormal, dragVectorWorld);
+    }
+
+    // 次のフレームのために開始座標を更新する？ -> しない方が変化量が分かりやすい
+    // dragState.startCoords.copy(currentMouse);
+}
+
+// ★追加: ドラッグ終了処理
+function onPointerUp(event) {
+    if (event.button !== 0) return;
+    if (dragState.isDragging) {
+        dragState.isDragging = false;
+        dragState.targetBlockId = null;
+        document.body.style.cursor = 'default'; // カーソル戻す
+        console.log("Dragging ended.");
+        // 必要なら最終状態の確定処理など
+    }
+}
+
 function onKeyDown(event) {
     const activeElement = document.activeElement;
     const isInputFocused = activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA';
@@ -75,28 +151,34 @@ function onKeyDown(event) {
 
     let needsPreviewUpdate = false;
 
-    // モード切り替え
-    if (event.ctrlKey && event.code === 'KeyE') {
+    // ★ Shift+E で XML編集モード切替
+    if (event.shiftKey && event.code === 'KeyE') {
         event.preventDefault();
         setXmlEditMode(!isXmlEditModeActive());
-        setPreviewVisible(false); // モード切替時はプレビュー非表示
-    } else if (event.code === 'KeyX') {
+        setPreviewVisible(false);
+    } else if (event.code === 'KeyX') { // 削除モード切替
         setDeleteMode(!isDeleteModeActive());
-        setPreviewVisible(false); // モード切替時はプレビュー非表示
+        setPreviewVisible(false);
     } else {
         // モードに応じた操作
         if (isXmlEditModeActive()) {
-            // XML編集モード中の配置済みブロック回転 (BlockTransformController呼出し)
-            handleBlockRotation(event.code);
+            handleBlockRotation(event.code); // JKL 回転
         } else if (!isDeleteModeActive()) {
-            // 通常モード中のプレビュー回転・反転
             needsPreviewUpdate = handlePreviewRotationKeyPress(event.code) || handlePreviewFlipKeyPress(event.code);
         }
     }
+    // Ctrlキーの状態は onPointerDown で取得済み
 
-    // プレビュー更新が必要な場合（通常モードでのプレビュー操作時）
     if (needsPreviewUpdate) {
-         updatePreviewBlock(mouse); // マウス座標を渡して即時更新
+        // updatePreviewBlock(mouse); // animateループに任せる
+    }
+}
+// ★追加: Ctrlキー離した場合の処理 (ドラッグ中に離された場合)
+function onKeyUp(event) {
+    if (event.code === 'ControlLeft' || event.code === 'ControlRight') {
+        if (dragState.isDragging) {
+            dragState.isCtrlPressed = false;
+        }
     }
 }
 
@@ -123,9 +205,21 @@ function handlePreviewFlipKeyPress(keyCode) {
 
 function onMouseLeave() {
     isMouseOverCanvas = false;
-    setPreviewVisible(false); // マウスが離れたらプレビュー非表示
+    setPreviewVisible(false);
+    if (dragState.isDragging) { // ドラッグ中にマウスが外れたら終了
+        onPointerUp({ button: 0 }); // 左ボタンUPイベントを擬似的に発生
+    }
+    clearFaceHighlight(); // 面ハイライトも消す
 }
 
 export function getIsMouseOverCanvas() {
     return isMouseOverCanvas;
+}
+
+/**
+ * ★ 新規: 現在のマウス座標(正規化済)のコピーを返します。
+ * @returns {THREE.Vector2}
+ */
+export function getCurrentMouseCoords() {
+    return mouse.clone(); // ★ クローンを返す
 }

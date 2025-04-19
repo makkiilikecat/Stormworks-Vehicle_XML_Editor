@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 
 const translation = new THREE.Matrix4();
+const _vec = new THREE.Vector3();
 
 /**
  * 位置ベクトルと姿勢行列からワールド行列を合成します。
@@ -63,4 +64,43 @@ export function rotationStringToMatrix(rotationString, targetMatrix = new THREE.
         0, 0, 0, 1
     );
     return targetMatrix;
+}
+
+/**
+ * ★ 新規: 行列から指定された軸の基底ベクトル（列）を取得します。
+ * @param {THREE.Matrix4} matrix - 対象の行列
+ * @param {number} axisIndex - 0: X軸, 1: Y軸, 2: Z軸
+ * @param {THREE.Vector3} targetVector - 結果を格納するベクトル (省略可能)
+ * @returns {THREE.Vector3} 基底ベクトル
+ */
+export function getBasisVector(matrix, axisIndex, targetVector = new THREE.Vector3()) {
+    const te = matrix.elements;
+    const offset = axisIndex * 4;
+    return targetVector.set(te[offset + 0], te[offset + 1], te[offset + 2]);
+}
+
+/**
+ * ★ 新規: 行列の指定された軸の基底ベクトル（列）を設定します（要素は整数化）。
+ * @param {THREE.Matrix4} matrix - 対象の行列 (変更されます)
+ * @param {number} axisIndex - 0: X軸, 1: Y軸, 2: Z軸
+ * @param {THREE.Vector3} vector - 設定するベクトル
+ */
+export function setBasisVector(matrix, axisIndex, vector) {
+    const te = matrix.elements;
+    const offset = axisIndex * 4;
+    // 要素を整数に丸めて設定
+    te[offset + 0] = Math.round(vector.x);
+    te[offset + 1] = Math.round(vector.y);
+    te[offset + 2] = Math.round(vector.z);
+}
+
+/**
+ * ★ 新規: 行列の回転・スケール部分(左上3x3)の要素をすべて整数に丸めます。
+ * @param {THREE.Matrix4} matrix - 対象の行列 (変更されます)
+ */
+export function roundMatrixElements(matrix) {
+    const te = matrix.elements;
+    te[0] = Math.round(te[0]); te[1] = Math.round(te[1]); te[2] = Math.round(te[2]);
+    te[4] = Math.round(te[4]); te[5] = Math.round(te[5]); te[6] = Math.round(te[6]);
+    te[8] = Math.round(te[8]); te[9] = Math.round(te[9]); te[10] = Math.round(te[10]);
 }
