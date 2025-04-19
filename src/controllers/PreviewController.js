@@ -1,93 +1,88 @@
 import * as THREE from 'three';
 import TWEEN from '@tweenjs/tween.js';
 import { blockGeometry, previewMaterial, snapToGrid } from '../models/BlockUtils.js';
-import { BLOCK_SIZE_METERS } from '../app/Constants.js';
+import { BLOCK_SIZE_METERS, ROTATION_ANGLE, X_AXIS, Y_AXIS, Z_AXIS } from '../app/Constants.js';
+import { raycastFromMouse } from '../services/RaycastService.js'; // Raycastサービスを利用
+import { getAllMeshes, getAllBlocks } from '../models/BlockDataManager.js'; // DataManagerからメッシュ/ブロック取得
+import { composeWorldMatrix } from '../models/MatrixUtils.js'; // 行列合成ヘルパー
 
-let camera, scene;
-let previewBlock;
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-const intersectionPoint = new THREE.Vector3();
-const normalVector = new THREE.Vector3();
+let scene;
+let previewBlock; // THREE.Mesh
+const targetPosition = new THREE.Vector3();
+const targetOrientationMatrix = new THREE.Matrix4();
+const displayPosition = new THREE.Vector3();
+const displayOrientationMatrix = new THREE.Matrix4();
 
-// ★ 修正: 位置と姿勢を分離して管理
-const targetPosition = new THREE.Vector3();         // 目標の設置位置 (ワールド座標)
-const targetOrientationMatrix = new THREE.Matrix4(); // 目標の姿勢 (回転・スケール、位置(0,0,0))
-const displayPosition = new THREE.Vector3();         // 表示中の位置 (アニメーション用)
-const displayOrientationMatrix = new THREE.Matrix4(); // 表示中の姿勢 (アニメーション用)
+let activeTween = null;
+const transformMatrix = new THREE.Matrix4();
+const q1 = new THREE.Quaternion(); // 計算用
+const s1 = new THREE.Vector3();    // 計算用
 
-let activeTween = null; // 回転アニメーション用Tween
-const transformMatrix = new THREE.Matrix4(); // 回転・反転計算用
-const translationMatrix = new THREE.Matrix4(); // 位置適用計算用
-const q1 = new THREE.Quaternion();
-const q2 = new THREE.Quaternion();
-const s1 = new THREE.Vector3();
-const s2 = new THREE.Vector3();
-
-export function initPreviewController(cam, scn) {
-    camera = cam;
+/**
+ * プレビューコントローラーを初期化します。
+ * @param {THREE.Scene} scn - シーンオブジェクト
+ */
+export function initPreviewController(scn) {
+    if (!scn) throw new Error("Scene must be provided for PreviewController");
     scene = scn;
-    previewBlock = new THREE.Mesh(blockGeometry, previewMaterial);
+
+    previewBlock = new THREE.Mesh(blockGeometry, previewMaterial.clone()); // 固有マテリアル
     previewBlock.visible = false;
     previewBlock.matrixAutoUpdate = false;
     scene.add(previewBlock);
 
-    // ★ 修正: 状態変数を初期化
     targetPosition.set(0, 0, 0);
-    targetOrientationMatrix.identity(); // 回転・スケールなし
+    targetOrientationMatrix.identity();
     displayPosition.copy(targetPosition);
     displayOrientationMatrix.copy(targetOrientationMatrix);
 }
 
-export function updateMousePosition(clientX, clientY) {
-    mouse.x = (clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(clientY / window.innerHeight) * 2 + 1;
-}
+// マウス座標はInputHandlerから注入される想定だったが、直接参照しない形式に
+// (updatePreviewBlock内でRaycastServiceを呼ぶため不要になった)
+// export function updateMousePosition(clientX, clientY) { /* ... */ }
 
-export function updatePreviewBlock(placedBlocksData) {
-    if (!camera || !previewBlock || !placedBlocksData) return;
+/**
+ * プレビューブロックの位置と表示状態を更新します (毎フレーム呼び出す)。
+ * @param {THREE.Vector2} currentMouseCoords - 現在のマウス座標(正規化済)
+ */
+export function updatePreviewBlock(currentMouseCoords) {
+    if (!previewBlock) return;
 
-    const targetMeshes = placedBlocksData.map(data => data.mesh).filter(mesh => !!mesh);
+    const targetMeshes = getAllMeshes(); // DataManagerから現在のメッシュリスト取得
     if (targetMeshes.length === 0) {
         setPreviewVisible(false); return;
     }
 
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(targetMeshes, false);
+    const intersects = raycastFromMouse(currentMouseCoords, targetMeshes); // Raycast実行
 
     if (intersects.length > 0) {
         const intersection = intersects[0];
-        intersectionPoint.copy(intersection.point);
-        if (intersection.face && intersection.face.normal) {
-            normalVector.copy(intersection.face.normal);
-        } else {
-            setPreviewVisible(false); return;
-        }
+        const intersectionPoint = intersection.point;
+        const normalVector = intersection.face?.normal;
 
-        // ★ 修正: 目標位置の計算
+        if (!normalVector) { setPreviewVisible(false); return; }
+
         const calculatedPosition = new THREE.Vector3()
             .copy(intersectionPoint)
             .addScaledVector(normalVector, BLOCK_SIZE_METERS / 2);
         const snappedPosition = snapToGrid(calculatedPosition);
 
-        // ★ 修正: targetPosition を更新
-        targetPosition.copy(snappedPosition);
+        targetPosition.copy(snappedPosition); // 目標位置を更新
 
-        const overlaps = placedBlocksData.some(blockData =>
+        // 重なりチェック (全ブロックデータと比較)
+        const allBlocks = getAllBlocks();
+        const overlaps = allBlocks.some(blockData =>
             blockData.position.distanceToSquared(targetPosition) < 0.0001
         );
 
         if (overlaps) {
             setPreviewVisible(false);
         } else {
-            // ★ 修正: アニメーション中でなければ表示位置も同期
-            if (!activeTween) {
+            if (!activeTween) { // アニメーション中でなければ表示位置も同期
                 displayPosition.copy(targetPosition);
-                // ★ 修正: 表示行列を合成して適用
-                updatePreviewMeshMatrix();
+                updatePreviewMeshMatrix(); // 表示メッシュ更新
             } else {
-                // アニメーション中は Tween が displayOrientationMatrix を更新し、
-                // updatePreviewMeshMatrix 内で最新の targetPosition と合成される
+                 // アニメーション中はTweenが位置も考慮して更新する
             }
             previewBlock.visible = true;
         }
@@ -96,103 +91,88 @@ export function updatePreviewBlock(placedBlocksData) {
     }
 }
 
-/** ★ 追加: 表示位置と表示姿勢からプレビューメッシュのワールド行列を更新 */
+/** 表示位置と表示姿勢からプレビューメッシュのワールド行列を更新 */
 function updatePreviewMeshMatrix() {
     if (!previewBlock) return;
-    translationMatrix.makeTranslation(displayPosition.x, displayPosition.y, displayPosition.z);
-    previewBlock.matrix.multiplyMatrices(translationMatrix, displayOrientationMatrix);
+    // MatrixUtilsのヘルパー関数を使用
+    composeWorldMatrix(displayPosition, displayOrientationMatrix, previewBlock.matrix);
 }
 
 
+/** Tween.jsを使ってアニメーション付きで目標姿勢を回転 */
 export function rotatePreview(axis, angle) {
     if (!previewBlock || !previewBlock.visible) return;
     if (activeTween) { activeTween.stop(); }
 
     // 1. 目標姿勢(targetOrientationMatrix)を計算
     transformMatrix.makeRotationAxis(axis, angle);
-    targetOrientationMatrix.premultiply(transformMatrix); // ワールド基準回転
+    targetOrientationMatrix.premultiply(transformMatrix);
 
     // 2. アニメーション開始/終了時の姿勢を取得
     const startOrientation = displayOrientationMatrix.clone();
     const startQuat = new THREE.Quaternion();
     const startScale = new THREE.Vector3();
-    startOrientation.decompose(new THREE.Vector3(), startQuat, startScale); // 位置は無視
+    startOrientation.decompose(new THREE.Vector3(), startQuat, startScale);
 
     const endOrientation = targetOrientationMatrix.clone();
     const endQuat = new THREE.Quaternion();
     const endScale = new THREE.Vector3();
-    endOrientation.decompose(new THREE.Vector3(), endQuat, endScale); // 位置は無視
+    endOrientation.decompose(new THREE.Vector3(), endQuat, endScale);
 
-    // 3. Tweenアニメーションを設定 (姿勢のみ補間)
+    // 3. Tweenアニメーションを設定
     const interpolator = { t: 0 };
     activeTween = new TWEEN.Tween(interpolator)
-        .to({ t: 1 }, 500)
+        .to({ t: 1 }, 500) // 0.5秒
         .easing(TWEEN.Easing.Quadratic.Out)
         .onUpdate(() => {
-            // 表示姿勢(displayOrientationMatrix)を補間
             q1.slerpQuaternions(startQuat, endQuat, interpolator.t);
             s1.lerpVectors(startScale, endScale, interpolator.t);
-            // ★ 修正: displayOrientationMatrix を更新 (位置は 0,0,0 のまま)
             displayOrientationMatrix.compose(new THREE.Vector3(0,0,0), q1, s1);
-            // ★ 修正: 表示位置は最新の targetPosition を使う
-            displayPosition.copy(targetPosition);
-            // ★ 修正: メッシュのワールド行列を更新
-            updatePreviewMeshMatrix();
+            displayPosition.copy(targetPosition); // 表示位置は常に最新の目標位置
+            updatePreviewMeshMatrix(); // 表示メッシュ更新
         })
         .onComplete(() => {
             activeTween = null;
-            displayOrientationMatrix.copy(targetOrientationMatrix); // 最終状態に同期
+            displayOrientationMatrix.copy(targetOrientationMatrix);
             displayPosition.copy(targetPosition);
-            updatePreviewMeshMatrix(); // 最終状態を適用
-            console.log("Rotation tween complete.");
+            updatePreviewMeshMatrix();
         })
-        .onStop(() => {
-             activeTween = null;
-             // 中断した場合、displayOrientation は最後の onUpdate の状態
-             // updatePreviewMeshMatrix(); // 必要なら呼ぶ
-             console.log("Rotation tween stopped.");
-        })
+        .onStop(() => { activeTween = null; })
         .start();
 }
 
-
+/** 反転はアニメーションなしで即時反映 */
 export function flipPreview(axis) {
     if (!previewBlock || !previewBlock.visible) return;
     if (activeTween) {
         activeTween.stop();
-        displayOrientationMatrix.copy(targetOrientationMatrix); // 停止前に同期
+        displayOrientationMatrix.copy(targetOrientationMatrix);
     }
 
-    // 目標姿勢(targetOrientationMatrix)を計算
     let sx = 1, sy = 1, sz = 1;
     if (axis === 'x') sx = -1; else if (axis === 'y') sy = -1; else if (axis === 'z') sz = -1;
     transformMatrix.makeScale(sx, sy, sz);
     targetOrientationMatrix.premultiply(transformMatrix);
 
-    // 表示姿勢(displayOrientationMatrix)も即時更新
-    displayOrientationMatrix.copy(targetOrientationMatrix);
-    // 表示位置も最新の目標位置に同期
-    displayPosition.copy(targetPosition);
-    // プレビューメッシュの行列を更新
-    updatePreviewMeshMatrix();
+    displayOrientationMatrix.copy(targetOrientationMatrix); // 表示姿勢も即時更新
+    displayPosition.copy(targetPosition); // 表示位置も同期
+    updatePreviewMeshMatrix(); // 表示メッシュ更新
 }
 
-
-/** ★ 修正: 目標の姿勢行列を取得 */
+/** 目標の姿勢行列を取得 */
 export function getPreviewOrientationMatrix() {
     return previewBlock && previewBlock.visible ? targetOrientationMatrix.clone() : null;
 }
 
-/** ★ 修正: 目標の位置を取得 */
+/** 目標の位置を取得 */
 export function getPreviewPosition() {
     return previewBlock && previewBlock.visible ? targetPosition.clone() : null;
 }
 
+/** プレビューの表示/非表示 */
 export function setPreviewVisible(visible) {
     if (previewBlock) {
-        if (!visible && activeTween) {
-            activeTween.stop();
-        }
+        if (!visible && activeTween) { activeTween.stop(); }
         previewBlock.visible = visible;
     }
 }

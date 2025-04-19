@@ -2,22 +2,29 @@
 import * as THREE from 'three';
 import { getSelectedBlockId, isXmlEditModeActive } from '../app/AppState.js';
 import { X_AXIS, Y_AXIS, Z_AXIS, ROTATION_ANGLE } from '../app/Constants.js';
+import { getBlockById, updateBlockTransform } from '../models/BlockDataManager.js'; // DataManager利用
 
-let placedBlocksData = []; // データ配列への参照
-const rotationMatrix = new THREE.Matrix4();
-const translationMatrix = new THREE.Matrix4();
+const rotationMatrix = new THREE.Matrix4(); // 計算用
 
-export function initBlockTransformController(blocksData) {
-    placedBlocksData = blocksData;
+/**
+ * BlockTransformControllerを初期化します。
+ */
+export function initBlockTransformController() {
+    // 特に初期化処理は不要だが、将来的な拡張のために用意
+    console.log("BlockTransformController initialized.");
 }
 
-// JKLキーに対応する回転処理
+/**
+ * JKLキー入力に基づいて、選択中のブロックを回転させます。
+ * @param {string} keyCode - 押されたキーのコード ('KeyJ', 'KeyK', 'KeyL')
+ * @returns {boolean} 回転が実行されたかどうか
+ */
 export function handleRotationInput(keyCode) {
     if (!isXmlEditModeActive()) return false; // XML編集モードでのみ有効
     const selectedId = getSelectedBlockId();
-    if (!selectedId) return false; // ブロックが選択されていないと無効
+    if (!selectedId) return false; // ブロック未選択
 
-    const blockData = placedBlocksData.find(d => d.id === selectedId);
+    const blockData = getBlockById(selectedId); // DataManagerからデータ取得
     if (!blockData) return false;
 
     let axis = null;
@@ -27,29 +34,21 @@ export function handleRotationInput(keyCode) {
         case 'KeyJ': axis = X_AXIS; angle = -ROTATION_ANGLE; break; // Pitch
         case 'KeyK': axis = Y_AXIS; angle = ROTATION_ANGLE; break;  // Yaw
         case 'KeyL': axis = Z_AXIS; angle = ROTATION_ANGLE; break;  // Roll
-        default: return false; // JKL以外は無視
+        default: return false;
     }
 
     console.log(`Rotating block ${selectedId} around ${keyCode}`);
-    rotateBlock(blockData, axis, angle);
-    return true; // 回転が実行された
-}
 
-// 選択されたブロックの姿勢を更新する
-function rotateBlock(blockData, axis, angle) {
-    // 回転行列を作成
+    // 新しい姿勢を計算
+    const newOrientation = blockData.orientation.clone(); // 現在の姿勢をコピー
     rotationMatrix.makeRotationAxis(axis, angle);
-    // 現在の姿勢に左から乗算 (ワールド基準回転)
-    blockData.orientation.premultiply(rotationMatrix);
-    // メッシュのワールド行列も更新
-    updateMeshMatrix(blockData);
+    newOrientation.premultiply(rotationMatrix); // ワールド基準で回転
+
+    // ★ DataManager に更新を依頼 (ViewUpdaterがメッシュ更新を担当)
+    updateBlockTransform(selectedId, blockData.position, newOrientation);
+
+    return true; // 回転実行
 }
 
-// ブロックデータに基づいてメッシュのワールド行列を更新
-function updateMeshMatrix(blockData) {
-    if (blockData && blockData.mesh) {
-        translationMatrix.makeTranslation(blockData.position.x, blockData.position.y, blockData.position.z);
-        blockData.mesh.matrix.multiplyMatrices(translationMatrix, blockData.orientation);
-        // matrixAutoUpdate は false のはず
-    }
-}
+// メッシュ更新は ViewUpdater が行うため、このコントローラーでは不要になった
+// function updateMeshMatrix(blockData) { /* ... */ }

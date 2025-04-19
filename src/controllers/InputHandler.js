@@ -1,52 +1,45 @@
 // src/controllers/InputHandler.js
 import * as THREE from 'three';
-import { updateMousePosition, getPreviewPosition, setPreviewVisible, rotatePreview, flipPreview, getPreviewOrientationMatrix, updatePreviewBlock } from './PreviewController.js';
-import { placeBlock } from './PlacementController.js';
-import { setDeleteMode, isDeleteModeActive, setXmlEditMode, isXmlEditModeActive, getSelectedBlockId } from '../app/AppState.js'; // AppState は親
-import { deleteBlock } from './DeletionController.js';
+import { getPreviewPosition, getPreviewOrientationMatrix, updatePreviewBlock, rotatePreview, flipPreview, setPreviewVisible } from './PreviewController.js';
+import { addBlock, removeBlock, getAllMeshes } from '../models/BlockDataManager.js'; // DataManager利用
+import { setDeleteMode, isDeleteModeActive, setXmlEditMode, isXmlEditModeActive, setSelectedBlockId, getSelectedBlockId } from '../app/AppState.js';
 import { selectBlockByRaycast } from './SelectionController.js';
-import { handleRotationInput } from './BlockTransformController.js';
+import { handleRotationInput as handleBlockRotation } from './BlockTransformController.js'; // 配置済みブロック回転
+import { raycastFromMouse } from '../services/RaycastService.js'; // Raycastサービス利用
 import { X_AXIS, Y_AXIS, Z_AXIS, ROTATION_ANGLE } from '../app/Constants.js';
 
-let camera, scene;
-let placedBlocksData = [];
 let isMouseOverCanvas = false;
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+export const mouse = new THREE.Vector2(); // Raycasting用マウス座標
 
-export function initInputHandler(domElement, cam, scn, blocksData) {
-    camera = cam; // SelectionController に渡すため保持
-    scene = scn;
-    placedBlocksData = blocksData; // 各コントローラーに渡すため保持
-
+/**
+ * InputHandlerを初期化し、イベントリスナーを設定します。
+ * @param {HTMLCanvasElement} domElement - イベントを設定するCanvas要素
+ */
+export function initInputHandler(domElement) {
     domElement.addEventListener('mousemove', onMouseMove);
     domElement.addEventListener('pointerdown', onPointerDown);
     domElement.addEventListener('mouseenter', () => { isMouseOverCanvas = true; });
     domElement.addEventListener('mouseleave', onMouseLeave);
     document.addEventListener('keydown', onKeyDown);
+    console.log("InputHandler initialized.");
 }
 
 function onMouseMove(event) {
-    const clientX = event.clientX;
-    const clientY = event.clientY;
-    // プレビューコントローラーにマウス位置を通知
-    updateMousePosition(clientX, clientY);
-    // Raycasting用のマウス座標も更新
-    mouse.x = (clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+    isMouseOverCanvas = true; // マウスが乗ったらフラグON
+    // Raycasting用のマウス座標を更新
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    // プレビュー位置更新は animate ループに任せる
 }
 
 function onPointerDown(event) {
     if (event.button !== 0) return; // 左クリックのみ
 
     if (isDeleteModeActive()) {
-        // 削除コントローラーに処理を依頼 (Raycast含む) -> DeletionControllerでRaycastする方が良いかも
-        handleDeleteClick(); // handleDeleteClick内でRaycastしてdeleteBlock呼出し
+        handleDeleteClick();
     } else if (isXmlEditModeActive()) {
-        // XML編集モード中はクリックで選択のみ？ -> 今は特に何もしない or 選択
-        selectBlockByRaycast(mouse); // クリック位置でブロック選択試行
+        selectBlockByRaycast(mouse); // XML編集モード中はクリックで選択/解除
     } else {
-        // 通常モード: プレビュー位置への配置 or 既存ブロックの選択
         handleNormalModeClick();
     }
 }
@@ -57,26 +50,21 @@ function handleNormalModeClick() {
 
     if (previewPosition && previewOrientation) {
         // プレビューが表示されていれば配置
-        placeBlock(previewPosition, previewOrientation);
-        updatePreviewBlock(placedBlocksData); // 配置後にプレビュー更新
+        addBlock({ position: previewPosition, orientation: previewOrientation });
+        // 配置後のプレビュー更新は animate ループが行う
     } else {
-        // プレビューが表示されていなければ、クリック位置でブロック選択試行
+        // プレビュー非表示なら、クリック位置でブロック選択/解除試行
         selectBlockByRaycast(mouse);
     }
 }
 
 function handleDeleteClick() {
-    if (!camera || !placedBlocksData) return;
-    raycaster.setFromCamera(mouse, camera);
-    const targetMeshes = placedBlocksData.map(data => data.mesh).filter(mesh => !!mesh);
-    if (targetMeshes.length === 0) return;
-    const intersects = raycaster.intersectObjects(targetMeshes, false);
-    if (intersects.length > 0) {
-        const intersectedMesh = intersects[0].object;
-        if (intersectedMesh && intersectedMesh.isMesh) {
-            deleteBlock(intersectedMesh);
-            updatePreviewBlock(placedBlocksData);
-        }
+    const meshes = getAllMeshes();
+    if (meshes.length === 0) return;
+    const intersects = raycastFromMouse(mouse, meshes);
+    if (intersects.length > 0 && intersects[0].object.userData.blockId) {
+        removeBlock(intersects[0].object.userData.blockId); // DataManagerに削除依頼
+        // 削除後のプレビュー更新は animate ループが行う
     }
 }
 
@@ -87,39 +75,32 @@ function onKeyDown(event) {
 
     let needsPreviewUpdate = false;
 
-    // モード切り替え (Ctrl+E, X)
+    // モード切り替え
     if (event.ctrlKey && event.code === 'KeyE') {
-        event.preventDefault(); // ブラウザのデフォルト動作抑制
+        event.preventDefault();
         setXmlEditMode(!isXmlEditModeActive());
-        needsPreviewUpdate = true;
+        setPreviewVisible(false); // モード切替時はプレビュー非表示
     } else if (event.code === 'KeyX') {
         setDeleteMode(!isDeleteModeActive());
-        needsPreviewUpdate = true;
+        setPreviewVisible(false); // モード切替時はプレビュー非表示
     } else {
-        // モードに応じたキー操作
+        // モードに応じた操作
         if (isXmlEditModeActive()) {
-            // XML編集モード中のJKL回転
-            handleRotationInput(event.code); // BlockTransformController を呼び出す
-            // XML編集モード中はプレビュー不要なので needsPreviewUpdate = false
+            // XML編集モード中の配置済みブロック回転 (BlockTransformController呼出し)
+            handleBlockRotation(event.code);
         } else if (!isDeleteModeActive()) {
-            // 通常モード中のJKLUIO (プレビュー操作) -> PreviewControllerで処理
-            // needsPreviewUpdate = handlePreviewTransformKeys(event.code); // PreviewControllerに処理を依頼する形式に変更するのが望ましい
-            // → 従来通りInputHandler内でPreviewControllerの関数を呼ぶ
+            // 通常モード中のプレビュー回転・反転
             needsPreviewUpdate = handlePreviewRotationKeyPress(event.code) || handlePreviewFlipKeyPress(event.code);
         }
     }
 
-    // プレビュー更新が必要な場合に呼び出す
-    if (needsPreviewUpdate && !isDeleteModeActive() && !isXmlEditModeActive()) {
-        updatePreviewBlock(placedBlocksData);
-    } else if (!isXmlEditModeActive() && !isDeleteModeActive()) {
-        // 通常モードでプレビュー操作した場合も更新が必要
-        // updatePreviewBlock(placedBlocksData); // これは不要。回転/反転関数後に呼ばれるため
+    // プレビュー更新が必要な場合（通常モードでのプレビュー操作時）
+    if (needsPreviewUpdate) {
+         updatePreviewBlock(mouse); // マウス座標を渡して即時更新
     }
 }
 
-// --- PreviewController 操作部分 ---
-/** プレビュー回転処理。回転が行われた場合にtrueを返す */
+// --- PreviewController への操作依頼 ---
 function handlePreviewRotationKeyPress(keyCode) {
     let rotated = false;
     switch (keyCode) {
@@ -129,7 +110,6 @@ function handlePreviewRotationKeyPress(keyCode) {
     }
     return rotated;
 }
-/** プレビュー反転処理。反転が行われた場合にtrueを返す */
 function handlePreviewFlipKeyPress(keyCode) {
      let flipped = false;
      switch (keyCode) {
@@ -139,10 +119,11 @@ function handlePreviewFlipKeyPress(keyCode) {
     }
     return flipped;
 }
+// --- ここまで ---
 
 function onMouseLeave() {
     isMouseOverCanvas = false;
-    setPreviewVisible(false);
+    setPreviewVisible(false); // マウスが離れたらプレビュー非表示
 }
 
 export function getIsMouseOverCanvas() {

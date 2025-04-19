@@ -2,30 +2,46 @@
 import * as THREE from 'three';
 import { setSelectedBlockId, getSelectedBlockId, addStateChangeListener } from '../app/AppState.js';
 import { normalMaterial, selectedMaterial } from '../models/BlockUtils.js';
+import { raycastFromMouse } from '../services/RaycastService.js';
+import { getAllMeshes, getMeshById } from '../models/BlockDataManager.js'; // DataManagerから取得
 
-let camera;
-let placedBlocksData = []; // データ配列への参照
-const raycaster = new THREE.Raycaster();
-let currentHighlightedMesh = null; // ハイライト中のメッシュ
+let camera; // RaycastService初期化後に設定される想定だったが、直接は不要に
+let currentHighlightedMesh = null;
+let originalMaterial = null; // ハイライト前のマテリアルを保持
 
-export function initSelectionController(cam, blocksData) {
-    camera = cam;
-    placedBlocksData = blocksData;
+/**
+ * SelectionControllerを初期化します。
+ */
+export function initSelectionController() {
     // 状態変更を監視してハイライトを更新
     addStateChangeListener(handleStateChange);
+    console.log("SelectionController initialized.");
 }
 
-// マウス座標からクリックされたブロックを選択する
+/**
+ * マウス座標からクリックされたブロックを選択します。
+ * @param {THREE.Vector2} mouseCoords - 正規化デバイス座標
+ */
 export function selectBlockByRaycast(mouseCoords) {
-    if (!camera || !placedBlocksData) return;
-    raycaster.setFromCamera(mouseCoords, camera);
-    const meshes = placedBlocksData.map(d => d.mesh).filter(m => !!m);
-    const intersects = raycaster.intersectObjects(meshes, false);
+    const meshes = getAllMeshes(); // 現在の全メッシュを取得
+    if (!meshes || meshes.length === 0) {
+        setSelectedBlockId(null); // 対象がない場合は選択解除
+        return;
+    }
+
+    const intersects = raycastFromMouse(mouseCoords, meshes); // Raycast実行
 
     if (intersects.length > 0) {
         const clickedMesh = intersects[0].object;
         if (clickedMesh.isMesh && clickedMesh.userData.blockId) {
-            setSelectedBlockId(clickedMesh.userData.blockId); // 状態更新
+            // 既に選択されているものをクリックしたら解除、そうでなければ選択
+            if (getSelectedBlockId() === clickedMesh.userData.blockId) {
+                 setSelectedBlockId(null);
+            } else {
+                setSelectedBlockId(clickedMesh.userData.blockId); // AppState更新
+            }
+        } else {
+             setSelectedBlockId(null); // メッシュだがIDがない場合などは解除
         }
     } else {
         // 何もないところをクリックしたら選択解除
@@ -37,15 +53,17 @@ export function selectBlockByRaycast(mouseCoords) {
 function highlightSelectedBlock(blockId) {
     // 前のハイライトを解除
     if (currentHighlightedMesh) {
-        currentHighlightedMesh.material = normalMaterial.clone(); // ★ 要clone
+        currentHighlightedMesh.material = originalMaterial || normalMaterial.clone(); // 元のマテリアルに戻す
         currentHighlightedMesh = null;
+        originalMaterial = null;
     }
     // 新しいブロックをハイライト
     if (blockId) {
-        const selectedData = placedBlocksData.find(d => d.id === blockId);
-        if (selectedData && selectedData.mesh) {
-            selectedData.mesh.material = selectedMaterial.clone(); // ★ 要clone
-            currentHighlightedMesh = selectedData.mesh;
+        const selectedMesh = getMeshById(blockId); // DataManagerからメッシュ取得
+        if (selectedMesh) {
+            originalMaterial = selectedMesh.material; // 元のマテリアルを記憶
+            selectedMesh.material = selectedMaterial.clone(); // 選択用マテリアルに差し替え
+            currentHighlightedMesh = selectedMesh;
         }
     }
 }
@@ -55,10 +73,11 @@ function handleStateChange(changedState) {
     if (changedState.hasOwnProperty('selectedBlockId')) {
         highlightSelectedBlock(changedState.selectedBlockId);
     }
-    // XML編集モードや削除モードが有効になったら選択解除するなども可能
-    if (changedState.isDeleteMode || changedState.isXmlEditMode) {
-         if(changedState.isDeleteMode === true || changedState.isXmlEditMode === true){
-             setSelectedBlockId(null); // モード変更時に選択解除
-         }
+    // 他のモードが有効になったら強制的に選択解除
+    if ((changedState.isDeleteMode && changedState.isDeleteMode === true) ||
+        (changedState.isXmlEditMode && changedState.isXmlEditMode === true))
+    {
+        // 選択解除の通知は setDeleteMode/setXmlEditMode 内で行うのでここでは不要かも
+        // setSelectedBlockId(null);
     }
 }
