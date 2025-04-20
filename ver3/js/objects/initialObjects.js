@@ -1,33 +1,56 @@
 import * as THREE from 'three';
+import { BlockData } from '../data/blockData.js'; // BlockDataをインポート
 
 /**
- * ワークベンチの原点(0,0,0)に初期ブロックを作成し、シーンに追加します。
+ * ワークベンチの原点(0,0,0)に対応する BlockData を作成し、
+ * それに関連付けられたメッシュをシーンに追加します。
  * @param {THREE.Scene} scene - ブロックを追加するシーン。
- * @returns {THREE.Mesh} 作成された原点ブロックのメッシュ。
+ * @returns {BlockData} 作成された原点ブロックのBlockDataインスタンス。
  */
-export function createOriginBlock(scene) {
-    // ブロックのジオメトリ (形状) を定義 (1x1x1の立方体)
-    // Stormworksのブロックサイズは 0.25m x 0.25m x 0.25m なので、
-    // Three.js上でのサイズを1とすると、座標の1単位が1ブロックに対応する。
+export function createOriginBlockData(scene) {
+    // --- BlockDataを生成 ---
+    const originPositionXml = { x: 0, y: 0, z: 0 }; // XML座標系での原点
+    const originRotationString = "1,0,0,0,1,0,0,0,1"; // 単位行列
+    const originColorString = "0"; // デフォルト色
+    const originBlockData = new BlockData(
+        '01_block', // 通常ブロックとして生成
+        originPositionXml,
+        originRotationString,
+        originColorString
+    );
+    // --------------------------
+
+    // メッシュを作成
     const geometry = new THREE.BoxGeometry(1, 1, 1);
-
-    // ブロックのマテリアル (見た目) を定義
+    // マテリアルはクローンして使う（他のブロックと共有しないため）
     const material = new THREE.MeshStandardMaterial({
-        color: 0xcccccc, // 初期ブロックは明るい灰色など
-        roughness: 0.8,  // 表面の粗さ
-        metalness: 0.2   // 金属っぽさ
-    });
+        color: 0xcccccc, // 原点ブロックの色 (やや明るい灰色)
+        roughness: 0.8,
+        metalness: 0.2
+     }).clone(); // 念のためクローンしておく
 
-    // ジオメトリとマテリアルからメッシュを作成
-    const originBlock = new THREE.Mesh(geometry, material);
+    const mesh = new THREE.Mesh(geometry, material);
 
-    // 位置を設定 (原点)
-    // BoxGeometryは中心が原点なので、position(0,0,0)でY=0平面が中心を通る
-    originBlock.position.set(0, 0, 0); // <<<--- 修正点: Y座標を0に変更
+    // メッシュの位置と向きは BlockData (Three.js座標系) から設定
+    mesh.position.copy(originBlockData.position);
+    mesh.matrix.copy(originBlockData.rotationMatrix);
+    mesh.matrix.setPosition(originBlockData.position);
+    mesh.matrixAutoUpdate = false; // 行列は手動で管理
+    mesh.matrixWorldNeedsUpdate = true; // ワールド行列の更新を指示
+
+    // 作成したメッシュをBlockDataに紐付け
+    originBlockData.mesh = mesh;
+
+    // --- ユーザーデータを追加して識別しやすくする ---
+    // (blockRenderer.js と同じ形式で設定)
+    mesh.userData.isBlockMesh = true;
+    mesh.userData.blockId = originBlockData.id;
+    // ---------------------------------------------
 
     // シーンに追加
-    scene.add(originBlock);
+    scene.add(mesh);
+    console.log("Origin block created and added to scene.");
 
-    // 作成したブロックを返す (後で参照する可能性があるため)
-    return originBlock;
+    // BlockDataインスタンスを返す
+    return originBlockData;
 }

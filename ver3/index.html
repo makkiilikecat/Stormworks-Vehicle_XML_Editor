@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stormworks XML Editor (Stage 1.2)</title>
+    <title>Stormworks XML Editor (Stage 2.3)</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -11,7 +11,20 @@
         <label for="fileInput">ビークルXML:</label>
         <input type="file" id="fileInput" accept=".xml">
         <button id="loadButton">読み込み</button>
-        <span id="load-status"></span> </div>
+        <button id="saveButton">保存</button>
+        <span id="file-status"></span> </div>
+
+    <div id="mode-indicator">
+        現在のモード: <span id="current-mode-text">通常</span>
+    </div>
+
+    <div id="inventory-controls">
+        <div>配置ブロック:</div>
+        <button class="block-select-button" data-block-id="01_block">基本ブロック</button>
+        <button class="block-select-button" data-block-id="02_wedge">ウェッジ</button>
+        <div id="current-placement-block">選択中: 基本ブロック</div>
+    </div>
+
 
     <canvas id="workbench-canvas"></canvas>
 

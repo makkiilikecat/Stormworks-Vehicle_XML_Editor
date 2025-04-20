@@ -18,8 +18,8 @@ body {
     z-index: -1; /* UIより後ろに */
 }
 
-/* ファイル読み込みUIのスタイル */
-#file-controls {
+/* ファイル操作UIのスタイル */
+#file-controls { /* <<< ID変更 */
     position: absolute;
     top: 10px;
     left: 10px;
@@ -39,7 +39,53 @@ body {
     padding: 5px 10px;
 }
 
-#load-status {
+#file-status { /* <<< ID変更 */
     font-size: 0.9em;
     margin-left: 10px;
+}
+
+/* モード表示UIのスタイル */
+#mode-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px; /* 右上に配置 */
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-size: 0.9em;
+    font-weight: bold;
+}
+
+#current-mode-text {
+    color: lightskyblue; /* モード名を少し目立たせる */
+}
+
+/* インベントリ/配置UIのスタイル */
+#inventory-controls {
+    position: absolute;
+    bottom: 10px; /* 下部に配置 */
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column; /* 縦に並べる */
+    gap: 5px;
+    font-size: 0.9em;
+}
+
+#inventory-controls div:first-child {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+#inventory-controls button {
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+#current-placement-block {
+    margin-top: 5px;
+    font-style: italic;
+    color: lightgray;
 }
