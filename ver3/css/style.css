@@ -18,7 +18,7 @@ body {
     z-index: -1; /* UIより後ろに */
 }
 
-/* ファイル読み込みUIのスタイル */
+/* ファイル操作UIのスタイル */
 #file-controls {
     position: absolute;
     top: 10px;
@@ -29,6 +29,7 @@ body {
     display: flex;
     align-items: center; /* 要素を縦中央揃え */
     gap: 10px; /* 要素間のスペース */
+    z-index: 10; /* 他のUIより手前に */
 }
 
 #file-controls label {
@@ -37,9 +38,161 @@ body {
 
 #file-controls button {
     padding: 5px 10px;
+    cursor: pointer;
 }
 
-#load-status {
+#file-status {
     font-size: 0.9em;
     margin-left: 10px;
+}
+
+/* モード表示UIのスタイル */
+#mode-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px; /* 右上に配置 */
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-size: 0.9em;
+    font-weight: bold;
+    z-index: 10;
+}
+
+#current-mode-text {
+    color: lightskyblue; /* モード名を少し目立たせる */
+}
+
+/* インベントリ/配置UIのスタイル */
+#inventory-controls {
+    position: absolute;
+    bottom: 10px; /* 下部に配置 */
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column; /* 縦に並べる */
+    gap: 5px;
+    font-size: 0.9em;
+    z-index: 10;
+}
+
+#inventory-controls div:first-child {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+#inventory-controls button {
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+#current-placement-block {
+    margin-top: 5px;
+    font-style: italic;
+    color: lightgray;
+}
+
+
+/* --- Stage 3.2 追加: XML編集パネル --- */
+
+/* 編集パネル共通スタイル */
+.edit-panel {
+    position: absolute;
+    top: 60px; /* ファイルコントロールの下あたり */
+    right: 10px;
+    width: 280px; /* 幅を調整 */
+    background-color: rgba(40, 40, 50, 0.85); /* 少し濃い背景 */
+    padding: 15px;
+    border-radius: 5px;
+    border: 1px solid #555;
+    color: #eee;
+    font-size: 0.9em;
+    max-height: calc(100vh - 80px); /* 高さ制限 */
+    overflow-y: auto; /* 内容が多い場合はスクロール */
+    z-index: 10; /* 他のUIと同程度 */
+}
+
+.edit-panel h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #666;
+    padding-bottom: 5px;
+    color: lightskyblue; /* 見出しの色 */
+}
+
+.edit-section {
+    margin-bottom: 15px;
+}
+
+.edit-section label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #ccc; /* ラベルの色 */
+}
+
+/* Vector3入力スタイル */
+.vector3-input {
+    display: grid;
+    grid-template-columns: auto 1fr; /* ラベルと入力 */
+    gap: 5px 8px; /* 縦と横の隙間 */
+    align-items: center;
+}
+.vector3-input input[type="number"] {
+    width: 100%;
+    box-sizing: border-box; /* paddingを含めて幅計算 */
+}
+
+/* Matrix3x3入力スタイル */
+.matrix3x3-input {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr); /* 3列均等 */
+    gap: 4px;
+}
+.matrix3x3-input div { /* 各列のコンテナ */
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.matrix3x3-input input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    text-align: right;
+    padding: 3px;
+}
+
+/* 入力フィールド共通スタイル */
+.edit-panel input[type="number"] {
+    background-color: #2a2a30; /* 少し明るい背景 */
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px;
+    font-family: monospace; /* 等幅フォント */
+}
+.edit-panel input[type="number"]:focus {
+    outline: none;
+    border-color: lightskyblue;
+    background-color: #333;
+}
+.edit-panel input[type="number"]:disabled {
+    background-color: #444;
+    color: #888;
+    cursor: not-allowed;
+}
+/* 複数選択時のプレースホルダー用スタイル */
+.edit-panel input[type="number"].multiple-selected::placeholder {
+    color: #888;
+    font-style: italic;
+    text-align: center; /* 中央揃え */
+}
+
+
+.info-text {
+    font-size: 0.85em;
+    color: #aaa;
+    margin-top: 10px;
+    min-height: 1em; /* 情報がない場合でも高さを確保 */
 }

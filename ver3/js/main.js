@@ -1,128 +1,91 @@
+/**
+ * @fileoverview アプリケーションのエントリーポイント。Three.js環境のセットアップ、
+ * 主要モジュールの初期化、アニメーションループの実行を担当。
+ */
+
 import * as THREE from 'three';
 import { setupSceneEnvironment, handleWindowResize } from './setup/sceneSetup.js';
 import { setupOrbitControls } from './setup/controlsSetup.js';
 import { setupHelpers } from './setup/helpersSetup.js';
-import { createOriginBlock } from './objects/initialObjects.js';
-import { loadFileAsText, parseVehicleXml } from './io/fileHandler.js';
-import { BlockData } from './data/blockData.js';
-// --- Stage 1.3 追加 ---
-import { clearBlocks, renderBlocks } from './rendering/blockRenderer.js';
-// ----------------------
+import { createOriginBlockData } from './objects/initialObjects.js';
+import { setupHistoryManager } from './state/historyManager.js';
+import { updateModeIndicator } from './ui/modeIndicator.js';
+import { setupInventoryUI, updatePlacementIndicator } from './ui/inventoryUI.js';
+import { getCurrentMode } from './state/editMode.js';
+// --- リファクタリング: eventManager をインポート ---
+import { initializeEventListeners, setApplicationState } from './events/eventManager.js';
+// -----------------------------------------
 
-// --- グローバル変数 ---
-let scene, camera, renderer, controls;
-let originBlock; // 原点ブロックへの参照
+// === グローバルアプリケーション状態 ===
+// 各モジュールからアクセスする必要がある主要なオブジェクトをまとめる
+const appState = {
+    scene: null,
+    camera: null,
+    renderer: null,
+    controls: null,
+    loadedBlocks: [], // 読み込んだ/配置したブロックデータ
+    selectedFile: null, // 最後に選択されたファイル
+    canvas: null,       // Canvas要素への参照
+    // isDraggingTransform: false, // ドラッグ状態は mouseInteractionHandler 内で管理
+};
+// ==================================
 
-let loadedBlocks = []; // 読み込んだブロックデータを格納する配列
-let selectedFile = null; // ユーザーが選択したファイルを保持
-
-// --- UI要素への参照 ---
-const fileInput = document.getElementById('fileInput');
-const loadButton = document.getElementById('loadButton');
-const loadStatus = document.getElementById('load-status');
 
 /**
- * アプリケーションの初期化処理
+ * アプリケーションの初期化処理。
+ * Three.js環境、ヘルパー、初期オブジェクト、状態管理、UI、イベントリスナーを設定。
  */
 function init() {
-    // シーン、カメラ、レンダラーをセットアップ
+    console.log("Initializing application...");
+
+    // --- Three.js 環境設定 ---
     const sceneEnv = setupSceneEnvironment();
-    scene = sceneEnv.scene;
-    camera = sceneEnv.camera;
-    renderer = sceneEnv.renderer;
+    appState.scene = sceneEnv.scene;
+    appState.camera = sceneEnv.camera;
+    appState.renderer = sceneEnv.renderer;
+    appState.canvas = sceneEnv.renderer.domElement; // Canvas参照を状態に追加
 
-    // 視点操作コントロールをセットアップ
-    controls = setupOrbitControls(camera, renderer.domElement);
+    // --- カメラコントロール設定 ---
+    appState.controls = setupOrbitControls(appState.camera, appState.renderer.domElement);
 
-    // グリッドと軸ヘルパーをセットアップ
-    setupHelpers(scene);
+    // --- ヘルパー設定 ---
+    setupHelpers(appState.scene);
 
-    // 原点ブロックを作成してシーンに追加
-    originBlock = createOriginBlock(scene); // 初期状態では表示
+    // --- 初期オブジェクト生成とデータ設定 ---
+    const originBlockData = createOriginBlockData(appState.scene);
+    appState.loadedBlocks.push(originBlockData); // 初期ブロックデータをセット
 
-    // イベントリスナー設定
-    setupEventListeners();
+    // --- 状態管理モジュール初期化 ---
+    setupHistoryManager(appState.scene, appState.loadedBlocks); // 履歴管理初期化
 
-    // ウィンドウリサイズイベントに対応
-    window.addEventListener('resize', () => handleWindowResize(camera, renderer));
+    // --- UIモジュール初期化 ---
+    setupInventoryUI();
+    updateModeIndicator(getCurrentMode()); // 初期モード表示
+    updatePlacementIndicator(); // 初期配置ブロック表示
 
-    // アニメーションループを開始
+    // --- イベントリスナー設定 ---
+    setApplicationState(appState); // eventManagerに状態オブジェクトへの参照を渡す
+    initializeEventListeners();    // eventManagerでリスナーを設定
+
+    // --- アニメーションループ開始 ---
     animate();
+
+    console.log("Application initialized successfully.");
 }
 
 /**
- * UI要素にイベントリスナーを設定します。
- */
-function setupEventListeners() {
-    // ファイルが選択されたときの処理
-    fileInput.addEventListener('change', (event) => {
-        selectedFile = event.target.files[0];
-        if (selectedFile) {
-            loadStatus.textContent = `ファイル選択中: ${selectedFile.name}`;
-            loadStatus.style.color = '#eee';
-        } else {
-            loadStatus.textContent = '';
-            selectedFile = null;
-        }
-    });
-
-    // 読み込みボタンがクリックされたときの処理
-    loadButton.addEventListener('click', async () => {
-        if (!selectedFile) {
-            alert('先にXMLファイルを選択してください。');
-            loadStatus.textContent = 'ファイルが選択されていません';
-            loadStatus.style.color = 'orange';
-            return;
-        }
-
-        loadStatus.textContent = '読み込み中...';
-        loadStatus.style.color = '#eee';
-
-        try {
-            // 1. ファイルをテキストとして読み込む
-            const xmlString = await loadFileAsText(selectedFile);
-            // 2. XML文字列を解析してブロックデータ配列を取得
-            const parsedBlocks = parseVehicleXml(xmlString);
-
-            // --- Stage 1.3 変更点 ---
-            // 3. 既存のブロックメッシュをクリア (原点ブロックは残す)
-            clearBlocks(scene);
-            // 4. 解析結果をグローバル変数に格納
-            loadedBlocks = parsedBlocks;
-            // 5. 新しいブロックデータを3Dシーンに描画
-            renderBlocks(scene, loadedBlocks);
-            // ----------------------
-
-            loadStatus.textContent = `読み込み完了: ${loadedBlocks.length} ブロック`;
-            loadStatus.style.color = 'lightgreen';
-
-        } catch (error) {
-            console.error('ファイル読み込みまたは解析エラー:', error);
-            loadStatus.textContent = `エラー: ${error.message}`;
-            loadStatus.style.color = 'tomato';
-            // エラー時は表示されているブロックをクリアし、データを空にする
-            clearBlocks(scene);
-            loadedBlocks = [];
-        } finally {
-            // 読み込み処理後、ファイル選択をリセット (任意)
-            // fileInput.value = '';
-            // selectedFile = null;
-        }
-    });
-}
-
-/**
- * アニメーションループ (フレームごとに実行)
+ * アニメーションループ (フレームごとに実行)。
+ * カメラコントロールの更新とシーンのレンダリングを行う。
  */
 function animate() {
-    // 次のフレームでのアニメーション実行を要求
+    // 次のフレームでの実行を要求
     requestAnimationFrame(animate);
 
-    // カメラコントロールを更新 (慣性などを適用)
-    controls.update();
+    // カメラコントロールを更新 (慣性など)
+    appState.controls.update();
 
     // シーンを描画
-    renderer.render(scene, camera);
+    appState.renderer.render(appState.scene, appState.camera);
 }
 
 // --- アプリケーション開始 ---

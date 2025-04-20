@@ -1,80 +1,47 @@
 import * as THREE from 'three';
+// --- 修正: coordinateConverter をインポート ---
+import {
+    positionFromXml,
+    rotationMatrixFromXmlString,
+    positionToXml,
+    rotationMatrixToXmlElements,
+    rotationMatrixFromXmlElements // setRotationMatrixFromXmlElements で使用
+} from '../utils/coordinateConverter.js';
+// -----------------------------------------
 
-let nextBlockId = 0; // ブロックにユニークIDを付与するためのカウンター
+let nextBlockId = 0; // アプリケーション内でユニークIDを付与するためのカウンター
 
 /**
  * Stormworksのビークル内の単一ブロックのデータを表現するクラス。
- * 読み込み時にThree.jsの座標系に合わせてデータを変換します。
+ * 位置と回転行列は内部的にThree.js座標系で保持します。
+ * XML座標系との変換は coordinateConverter を介して行います。
  */
 export class BlockData {
     /**
      * BlockDataインスタンスを作成します。
-     * @param {string} definitionId - ブロック定義ID (XMLの'd'属性)。'01_block_weight' など。
-     * @param {object} positionXml - ブロックの座標 {x, y, z} (XMLの'vp'属性)。
-     * @param {string} rotationString - 回転行列の文字列表現 "r11,r21,r31,..." (XMLの'r'属性)。
-     * @param {string} colorString - カラーインデックスの文字列表現 "idx1,c1,c2,..." (XMLの'sc'属性)。
+     * @param {string} definitionId - ブロック定義ID (XMLの'd'属性)。
+     * @param {object} positionXml - ブロックの座標 {x, y, z} (XMLの値)。
+     * @param {string} rotationString - 回転行列の文字列表現 "r11,r21,..." (XMLの値)。
+     * @param {string} colorString - カラーインデックスの文字列表現 (XMLの値)。
+     * @param {THREE.Matrix4} [initialMatrix] - (オプション) 配置時に指定される初期向き(Three.js座標系)。指定されない場合はrotationStringから生成。
      */
-    constructor(definitionId, positionXml, rotationString, colorString) {
-        // --- 基本情報 ---
-        this.id = nextBlockId++; // アプリケーション内でユニークなID
-        this.definitionId = definitionId || '01_block_weight'; // ブロックの種類
+    constructor(definitionId, positionXml, rotationString, colorString, initialMatrix = null) {
+        this.id = nextBlockId++;
+        this.definitionId = definitionId || '01_block'; // d属性がない場合は通常ブロック
 
-        // --- 位置 (Three.js座標系に変換) ---
-        // XMLのvp属性 (x, y, z) を読み込み、Z座標の符号を反転させる
-        this.position = new THREE.Vector3(
-            parseInt(positionXml?.x || '0', 10),
-            parseInt(positionXml?.y || '0', 10),
-            -parseInt(positionXml?.z || '0', 10) // <<<--- Z座標の符号を反転
-        );
+        // --- 位置 (XMLからThree.js座標系へ変換して保持) ---
+        this.position = positionFromXml(positionXml);
 
-        // --- 回転/スケール (回転行列 - Three.js座標系に変換) ---
-        // XMLのr属性 (9つの数値) を Matrix4 として格納し、座標系変換を行う
-        this.rotationMatrix = this.parseAndConvertRotationMatrix(rotationString);
+        // --- 回転/スケール (XML文字列または初期MatrixからThree.js座標系へ変換して保持) ---
+        this.rotationMatrix = initialMatrix instanceof THREE.Matrix4
+                              ? initialMatrix.clone() // 配置時の向きを優先
+                              : rotationMatrixFromXmlString(rotationString); // 読み込み時は文字列から
 
         // --- 色 ---
-        // XMLのsc属性 (カラーパレットインデックスのリスト) を数値配列として格納
         this.colorIndices = this.parseColorIndices(colorString);
 
-        // --- 内部状態 (3Dオブジェクトへの参照など、後で追加) ---
-        this.mesh = null; // 対応するThree.jsのMeshオブジェクト (Stage 1.3で設定)
-    }
-
-    /**
-     * 回転行列の文字列を解析し、Stormworks座標系からThree.js座標系へ変換した
-     * THREE.Matrix4オブジェクトを生成します。
-     * @param {string} rString - "r11,r21,r31,r12,r22,r32,r13,r23,r33" 形式の文字列。
-     * @returns {THREE.Matrix4} 座標系変換された回転行列。デフォルトは単位行列。
-     * @private
-     */
-    parseAndConvertRotationMatrix(rString) {
-        const matrix = new THREE.Matrix4(); // デフォルトは単位行列
-        const defaultValues = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-
-        if (rString) {
-            const values = rString.split(',').map(Number);
-            if (values.length === 9 && values.every(v => !isNaN(v))) {
-                // Stormworksの 'r' 属性 (列優先 3x3) を読み込む
-                const [r11, r21, r31, r12, r22, r32, r13, r23, r33] = values;
-
-                // Three.js座標系への変換 (Z軸反転): M_three = T * M_sw * T^-1
-                // T = diag(1, 1, -1, 1) なので T = T^-1
-                // 具体的な計算: m'_ij = t_ii * m_ij * t_jj
-                // Z成分(i=3)またはZ基底(j=3)に関連する要素の符号が変わる
-                matrix.set(
-                     r11,  r12, -r13, 0, // Col 1 (X basis) - Z成分の符号反転
-                     r21,  r22, -r23, 0, // Col 2 (Y basis) - Z成分の符号反転
-                    -r31, -r32,  r33, 0, // Col 3 (Z basis) - X,Y成分の符号反転
-                     0,    0,    0,   1
-                );
-            } else {
-                console.warn(`Invalid rotation matrix string: "${rString}". Using identity.`);
-                matrix.fromArray(defaultValues);
-            }
-        } else {
-            // r属性がない場合は単位行列を使用
-             matrix.fromArray(defaultValues);
-        }
-        return matrix;
+        // --- 3Dオブジェクトへの参照 ---
+        this.mesh = null; // 対応するThree.jsのMeshオブジェクト
     }
 
     /**
@@ -85,8 +52,68 @@ export class BlockData {
      */
     parseColorIndices(scString) {
         if (scString) {
+            // カンマで分割し、各要素を数値に変換
             return scString.split(',').map(s => parseInt(s, 10)).filter(n => !isNaN(n));
         }
-        return [0];
+        return [0]; // sc属性がない場合はデフォルト値
+    }
+
+    // --- XML座標系アクセス用メソッド (coordinateConverterを使用) ---
+
+    /**
+     * XML座標系での位置を取得します (z反転、整数)。
+     * @returns {{x: number, y: number, z: number}} XML座標系の位置。
+     */
+    getPositionXml() {
+        return positionToXml(this.position);
+    }
+
+    /**
+     * XML座標系での回転行列要素 (r属性の9要素、列優先) を取得します (整数)。
+     * @returns {number[]} 9つの整数要素の配列 [r11, r21, r31, r12, ...]。
+     */
+    getRotationMatrixXmlElements() {
+        return rotationMatrixToXmlElements(this.rotationMatrix);
+    }
+
+    /**
+     * XML座標系での位置を設定します。内部ではThree.js座標系に変換されます。
+     * 関連付けられたメッシュの位置も更新します。
+     * @param {number} x - X座標 (XML座標系)。
+     * @param {number} y - Y座標 (XML座標系)。
+     * @param {number} z - Z座標 (XML座標系)。
+     */
+    setPositionFromXml(x, y, z) {
+        // coordinateConverterを使ってThree.js座標に変換して内部状態を更新
+        this.position = positionFromXml({ x, y, z });
+
+        // 関連付けられたメッシュも更新
+        if (this.mesh) {
+            this.mesh.position.copy(this.position);
+            // メッシュの行列の位置情報も更新 (matrixAutoUpdate = false のため)
+            this.mesh.matrix.setPosition(this.position);
+            this.mesh.matrixWorldNeedsUpdate = true; // ワールド行列の更新フラグ
+        }
+    }
+
+    /**
+     * XML座標系での回転行列要素 (r属性の9要素、列優先) を設定します。
+     * 内部ではThree.js座標系のMatrix4に変換されます。
+     * 関連付けられたメッシュの回転・スケールも更新します。
+     * @param {number[]} elements - 9つの整数要素の配列 [r11, r21, r31, r12, ...]。
+     */
+    setRotationMatrixFromXmlElements(elements) {
+        // coordinateConverterを使ってThree.jsのMatrix4に変換して内部状態を更新
+        this.rotationMatrix = rotationMatrixFromXmlElements(elements);
+
+         // 関連付けられたメッシュも更新
+         if (this.mesh) {
+             // メッシュの行列の回転・スケール部分をコピー
+             // (setPositionは別途行われるか、ここで行う)
+             this.mesh.matrix.copy(this.rotationMatrix);
+             // 位置情報は現在のメッシュの位置を維持（またはBlockDataのpositionを再適用）
+             this.mesh.matrix.setPosition(this.position);
+             this.mesh.matrixWorldNeedsUpdate = true; // ワールド行列の更新フラグ
+         }
     }
 }
