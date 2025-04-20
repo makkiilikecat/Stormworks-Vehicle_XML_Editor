@@ -1,0 +1,13 @@
+/* 基本的なページスタイル */
+body {
+    margin: 0; /* ブラウザデフォルトのマージンを削除 */
+    overflow: hidden; /* スクロールバーを非表示 */
+    background-color: #333; /* 背景色を暗めに設定 */
+}
+
+/* Canvas要素をウィンドウ全体に表示 */
+#workbench-canvas {
+    display: block; /* インライン要素の隙間を削除 */
+    width: 100vw; /* ビューポート幅全体 */
+    height: 100vh; /* ビューポート高さ全体 */
+}

@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>せん断/ストレッチ エディタ 仕様解説</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
+    <style>
+        /* ドキュメント全体のスタイル */
+        body {
+            font-family: Meiryo, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', sans-serif;
+            line-height: 1.7;
+            padding: 25px;
+            color: #333;
+        }
+        h1, h2, h3 {
+            border-bottom: 2px solid #007bff; /* 見出しの区切り線を青色に */
+            padding-bottom: 8px;
+            margin-top: 1.8em;
+            margin-bottom: 1em;
+            color: #0056b3; /* 見出しの色 */
+        }
+        h1 { font-size: 2em; }
+        h2 { font-size: 1.6em; }
+        h3 { font-size: 1.3em; border-bottom-style: dashed; }
+
+        /* 展開可能なセクションのスタイル */
+        details {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 1.2em;
+            background-color: #fdfdfd;
+        }
+        summary {
+            font-weight: bold;
+            cursor: pointer;
+            padding: 12px 15px;
+            background-color: #f0f8ff; /* Summaryの背景を薄い青に */
+            border-bottom: 1px solid #ddd;
+            outline: none; /* クリック時の枠線を消す */
+            transition: background-color 0.2s ease;
+        }
+        details[open] summary {
+            border-bottom: 1px solid #ccc;
+            background-color: #e6f2ff; /* 開いたときの背景色 */
+        }
+        summary:hover {
+            background-color: #eaf4ff;
+        }
+        .content {
+            padding: 15px 20px;
+            border-top: 1px solid #eee; /* コンテンツ上部の区切り線 */
+        }
+
+        /* コードブロックのスタイル */
+        pre[class*="language-"] { /* PrismJS適用後のpreタグ */
+            background-color: #2d2d2d; /* 暗めの背景 */
+            padding: 1em;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+        code[class*="language-"] { /* PrismJS適用後のcodeタグ */
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+        }
+        .code-block {
+            margin-top: 1em;
+        }
+        .code-block p { margin-bottom: 0.5em; font-weight: bold; }
+
+        /* インタラクティブ要素や図のスタイル */
+        .interactive-demo, .diagram {
+            border: 1px dashed #aaa;
+            background-color: #f9f9f9;
+            padding: 15px;
+            margin: 1.5em 0;
+            text-align: center;
+        }
+        .diagram svg { max-width: 100%; height: auto; } /* Mermaid SVGのレスポンシブ対応 */
+
+        /* iframe スタイル */
+        #editorFrame {
+            width: 100%;
+            height: 600px; /* 高さを調整 */
+            border: 1px solid #ccc;
+            margin-top: 1em;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        /* その他 */
+        ul, ol { padding-left: 25px; }
+        li { margin-bottom: 0.5em; }
+        code { background-color: #eee; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em;}
+        strong { color: #d9534f; } /* 強調したい部分の色 */
+    </style>
+</head>
+<body>
+
+    <h1>せん断/ストレッチ エディタ 仕様解説</h1>
+
+    <section id="intro">
+        <h2>1. はじめに</h2>
+        <p>このドキュメントは、開発された「せん断/ストレッチ エディタ」の操作方法、主要な機能、およびその実装について解説するものです。主にプロジェクトメンバーが仕様を理解し、今後の開発や改修に役立てることを目的としています。</p>
+        <p>このエディタは、Three.jsを用いて単一のブロックに対し、StormworksのXML編集で可能な非直交変形（せん断・ストレッチ）をマウス操作で直感的に行うことを目指したプロトタイプです。以下の主要な機能を持ちます:</p>
+        <ul>
+            <li>マウスドラッグによる<strong>せん断 (Shear)</strong> 変形</li>
+            <li>Shift + マウスドラッグによる<strong>ストレッチ (Stretch)</strong> 変形</li>
+            <li>変形中の<strong>ゴーストプレビュー</strong>表示（整数化・制限適用後の形状を半透明で表示）</li>
+            <li>Stormworksの仕様に合わせた<strong>行列要素の整数化</strong></li>
+            <li>変形結果が潰れて操作不能になることを防ぐ<strong>最小厚み・最小体積制限</strong></li>
+            <li>現在の（スナップ後の）<strong>回転行列表示</strong></li>
+        </ul>
+        <div class="interactive-demo">
+            <h3>完成版エディタ (デモ)</h3>
+            <p><strong>注意:</strong> このHTMLファイルをローカルで開いている場合、セキュリティ制限により以下の埋め込みエディタは動作しない可能性があります。Webサーバー経由でアクセスすると動作します。</p>
+            <iframe id="editorFrame" src="./index.html" title="せん断/ストレッチ エディタ デモ"></iframe>
+            </div>
+    </section>
+
+    <section id="usage">
+        <h2>2. 操作方法</h2>
+        <ul>
+            <li><b>視点回転:</b> マウスの<strong>右ボタン</strong>を押しながらドラッグします。</li>
+            <li><b>視点移動 (パン):</b> マウスの<strong>中ボタン（ホイールクリック）</strong>を押しながらドラッグします。</li>
+            <li><b>ズーム:</b> マウス<strong>ホイール</strong>を回転させます。</li>
+            <li><b>せん断 (Shear) 変形:</b>
+                <ol>
+                    <li>変形させたいブロックの<strong>面</strong>にマウスカーソルを合わせます。</li>
+                    <li>マウスの<strong>左ボタン</strong>を押しながらドラッグします。</li>
+                    <li>選択した面が、スクリーン（画面）に平行な仮想平面上をマウスカーソルに追従するように移動し、ブロック全体がせん断変形します。</li>
+                </ol>
+            </li>
+            <li><b>ストレッチ (Stretch) 変形:</b>
+                <ol>
+                    <li>変形させたいブロックの<strong>面</strong>にマウスカーソルを合わせます。</li>
+                    <li>キーボードの <strong>Shiftキー</strong> を押しながら、マウスの<strong>左ボタン</strong>でドラッグします。</li>
+                    <li>マウスのスクリーン上の動きが、選択した面の法線方向への移動量に変換され、ブロックがその方向に伸縮します。面の向き（カメラ側か奥側か）に応じて、マウスの上下に対する伸縮方向が直感的に調整されます。</li>
+                </ol>
+            </li>
+            <li><b>変形の確定:</b> マウスの左ボタンを離すと、変形が確定します。ゴースト表示（半透明）されていたスナップ後の形状が、最終的なブロックの形状となります。</li>
+            <li><b>リセット:</b> 左上の「ブロックをリセット」ボタンをクリックすると、ブロックの形状が初期の立方体に戻ります。</li>
+            <li><b>行列確認:</b> 左上の「確定後の行列 (r):」欄に、現在の（スナップ後の）ブロックの回転・スケール・せん断を表す行列（左上3x3部分）がカンマ区切りで表示されます。</li>
+        </ul>
+    </section>
+
+    <section id="implementation">
+        <h2>3. 主要な機能と実装</h2>
+
+        <details>
+            <summary><strong>3.1. 基本構成と初期化 (`init` 関数)</strong></summary>
+            <div class="content">
+                <p>このエディタは `three.js` ライブラリをベースに構築されています。カメラ操作には `OrbitControls` を利用しています。</p>
+                <p>主な構成要素は以下の通りです:</p>
+                <ul>
+                    <li><strong>シーン (`scene`):</strong> 全ての3Dオブジェクト、ライト、ヘルパーを含む空間。</li>
+                    <li><strong>カメラ (`camera`):</strong> ユーザーの視点となる `PerspectiveCamera`。</li>
+                    <li><strong>レンダラー (`renderer`):</strong> シーンを解釈し、Canvasに描画する `WebGLRenderer`。</li>
+                    <li><strong>カメラコントロール (`controls`):</strong> マウスによる視点操作を可能にする `OrbitControls`。</li>
+                    <li><strong>ライト:</strong> シーンを照らす `AmbientLight` (環境光) と `DirectionalLight` (平行光源)。</li>
+                    <li><strong>ヘルパー:</strong> 位置関係を分かりやすくするための `GridHelper` と `AxesHelper`。</li>
+                    <li><strong>ブロック (`block`):</strong> ユーザーが操作するメインのブロック。リアルタイム（スナップ前）の変形を表示し、不透明。</li>
+                    <li><strong>ゴーストブロック (`ghostBlock`):</strong> スナップ後（整数化・制限適用後）の形状をプレビュー表示するためのブロック。半透明で、ドラッグ中のみ表示。</li>
+                    <li><strong>初期行列 (`initialMatrix`):</strong> ブロックのリセット時に使用する、初期状態の行列。</li>
+                </ul>
+                 <div class="diagram">
+                     <p><strong>シーン構造 (簡易図):</strong></p>
+                     <pre class="mermaid">
+ graph TD;
+     subgraph "3D空間 (Scene)"
+         A[Camera]
+         B(Lights)
+         C(Helpers)
+         D(Block - 実体)
+         E(GhostBlock - 半透明)
+     end
+     subgraph "ユーザー操作"
+        F[OrbitControls] -- 操作 --> A
+        G[ドラッグ操作] -- 変形 --> D & E
+     end
+     subgraph "描画"
+        H[Renderer] -- 描画 --> I(Canvas)
+        A -- 視点 --> H
+        B -- 照明 --> D & E & C
+        C -- 表示 --> H
+        D -- 表示 --> H
+        E -- 表示 --> H
+     end
+                     </pre>
+                 </div>
+                <div class="code-block">
+                    <p>関連コード (`init` 関数):</p>
+                    <pre><code class="language-javascript">
+function init() {
+    // シーン作成
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdddddd);
+
+    // カメラ作成
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(1.5, 1.5, 2.5);
+
+    // レンダラー作成
+    const canvas = document.querySelector('#c');
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.sortObjects = false; // 透明オブジェクトの描画順のため
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    // カメラコントロール作成
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    // ... (OrbitControls設定) ...
+    controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+
+    // ライト作成
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    directionalLight.position.set(5, 10, 7);
+    scene.add(directionalLight);
+
+    // ヘルパー作成
+    const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+    scene.add(gridHelper);
+    const axesHelper = new THREE.AxesHelper(1);
+    scene.add(axesHelper);
+
+    // ブロックジオメトリ作成 (共有)
+    const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+
+    // リアルタイム表示用ブロック作成 (不透明)
+    const materials = [ /* ... 面ごとのマテリアル ... */ ];
+    block = new THREE.Mesh(geometry, materials);
+    block.matrixAutoUpdate = false; // 行列を手動で更新
+    initialMatrix = block.matrix.clone(); // 初期状態を保存
+    scene.add(block);
+
+     // ゴースト表示用ブロック作成 (半透明)
+    const ghostMaterials = materials.map(m => { /* ... 透明度設定 ... */ });
+    ghostBlock = new THREE.Mesh(geometry, ghostMaterials);
+    ghostBlock.matrixAutoUpdate = false;
+    ghostBlock.visible = false; // 最初は非表示
+    scene.add(ghostBlock);
+
+    // UIイベントリスナー設定
+    resetButton.addEventListener('click', resetBlockTransform);
+
+    // DOMイベントリスナー設定
+    // ... (pointerdown, move, up, contextmenu, resize) ...
+
+    // 初期行列表示
+    updateMatrixDisplay();
+}
+                    </code></pre>
+                </div>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.2. ドラッグ操作の検出と状態管理</strong></summary>
+            <div class="content">
+                <p>ユーザーがCanvas上でマウス操作を行うと、以下のイベントハンドラが呼び出されます:</p>
+                <ul>
+                    <li><strong>`onPointerDown` (マウス左ボタン押下):</strong>
+                        <ul>
+                            <li>マウスカーソル下のブロック面情報を `getIntersectedFace` で取得します。</li>
+                            <li>面が見つかれば、ドラッグ状態フラグ `dragState.isDragging` を `true` に設定します。</li>
+                            <li>Shiftキーの状態に応じて操作モード (`dragState.mode`) を 'shear' または 'stretch' に設定します。</li>
+                            <li>ドラッグ開始に必要な情報（開始点、マウス座標、面情報、開始時の行列など）を `dragState` オブジェクトに保存します。</li>
+                            <li>せん断モードの場合は、カメラに垂直な基準平面 `dragPlaneCameraNormal` と、その平面上の開始点 `dragStartPointOnPlane` を計算します。</li>
+                            <li>ゴーストブロックを表示 (`ghostBlock.visible = true`) し、現在のブロックの状態に同期させます。</li>
+                            <li>カメラ操作を一時的に無効化 (`controls.enabled = false`) します。</li>
+                        </ul>
+                    </li>
+                    <li><strong>`onPointerMove` (マウス移動):</strong>
+                        <ul>
+                            <li>`dragState.isDragging` が `true` の場合のみ処理を実行します。</li>
+                            <li>現在のマウス座標を `dragState.currentMouse` に更新し、前回の座標を `dragState.lastMouse` に保存します。</li>
+                            <li>現在の `dragState.mode` に応じて `applyShear` または `applyStretch` 関数を呼び出し、ブロックの変形計算と行列更新を行います。</li>
+                            <li>行列表示 `updateMatrixDisplay` を呼び出します。</li>
+                        </ul>
+                    </li>
+                    <li><strong>`onPointerUp` (マウス左ボタン解放):</strong>
+                        <ul>
+                            <li>`dragState.isDragging` が `true` の場合のみ処理を実行します。</li>
+                            <li>最終的なブロックの状態を、ゴーストブロック（スナップ済み）の状態 (`ghostBlock.matrix`) に確定させます (`block.matrix.copy(...)`)。</li>
+                            <li>ゴーストブロックを非表示 (`ghostBlock.visible = false`) にします。</li>
+                            <li>`dragState` をリセットし、カメラ操作を再度有効化 (`controls.enabled = true`) します。</li>
+                        </ul>
+                    </li>
+                </ul>
+                <div class="code-block">
+                    <p>関連コード (`dragState` オブジェクト定義):</p>
+                    <pre><code class="language-javascript">
+// ドラッグ操作の状態管理
+const dragState = {
+    isDragging: false,                      // ドラッグ中か否か
+    mode: null,                             // 現在の操作モード ('shear' または 'stretch')
+    startPoint: new THREE.Vector3(),        // ドラッグ開始時のブロック面上の交点 (ワールド座標)
+    startMouse: new THREE.Vector2(),        // ドラッグ開始時のマウス座標 (NDC)
+    currentMouse: new THREE.Vector2(),      // 現在のマウス座標 (NDC)
+    lastMouse: new THREE.Vector2(),         // 1フレーム前のマウス座標 (NDC)
+    face: null,                             // ドラッグ中の面情報 { normal, materialIndex, axisInfo, center }
+    dragPlaneCameraNormal: new THREE.Plane(), // せん断操作で使用するカメラに垂直な平面
+    dragStartPointOnPlane: new THREE.Vector3(), // せん断操作のドラッグ開始点 (上記平面上)
+    initialBlockMatrix: new THREE.Matrix4(), // ドラッグ開始時のブロック行列
+};
+                    </code></pre>
+                </div>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.3. 面情報の取得 (`getIntersectedFace` 他)</strong></summary>
+            <div class="content">
+                <p>ドラッグ操作を開始するためには、まずマウスカーソル下のブロック面を特定する必要があります。これは `getIntersectedFace` 関数で行われます。</p>
+                <ol>
+                    <li><strong>Raycasting:</strong> `raycaster.setFromCamera(mouse, camera)` でマウス位置からレイを生成し、`raycaster.intersectObject(block)` で不透明なブロック (`block`) との交差判定を行います。</li>
+                    <li><strong>交差情報の取得:</strong> 交差があれば、最初の交差点情報 `intersects[0]` から、交差点のワールド座標 (`intersection.point`) と、交差した面の情報 (`intersection.face`) を取得します。</li>
+                    <li><strong>ワールド法線の計算:</strong> 面のローカル法線 (`intersection.face.normal`) を、ブロックの現在のワールド行列 (`block.matrixWorld`) を使ってワールド座標系での法線ベクトルに変換し、正規化します。縮退により法線が計算できない場合は `null` を返します。</li>
+                    <li><strong>ローカル軸情報の取得:</strong> 計算したワールド法線とブロックの行列を使って `getLocalAxisInfoFromWorldNormal` 関数を呼び出し、その面がブロックのローカル座標系でどの軸 (X, Y, Z) に対応し、どちらの向き (+ or -) を向いているかを示す情報 (`{ axisIndex, sign }`) を取得します。</li>
+                    <li><strong>面の中心座標の計算:</strong> 得られたローカル軸情報 (`axisInfo`) とブロックの行列を使って `getFaceCenterWorld` 関数を呼び出し、その面のワールド空間での中心座標を計算します。これは、新しいせん断ロジックの基準平面を設定するために使用されます。</li>
+                    <li><strong>結果の返却:</strong> 上記で得られた情報（交点、ワールド法線、マテリアルインデックス、ローカル軸情報、面の中心座標）をまとめてオブジェクトとして返します。</li>
+                </ol>
+                 <div class="code-block">
+                     <p>関連コード (`getIntersectedFace` 関数):</p>
+                     <pre><code class="language-javascript">
+function getIntersectedFace(mouseCoords) {
+    // ... (縮退チェック) ...
+    raycaster.setFromCamera(mouseCoords, camera);
+    const intersects = raycaster.intersectObject(block);
+    if (intersects.length > 0 && intersects[0].face) {
+        const intersection = intersects[0];
+        const worldNormal = /* ... ワールド法線計算 ... */.normalize();
+        if (isNaN(worldNormal.x) || worldNormal.lengthSq() < 0.5) { return null; } // 法線チェック
+        const axisInfo = getLocalAxisInfoFromWorldNormal(worldNormal, block.matrix);
+        const faceCenterWorld = getFaceCenterWorld(block.matrix, axisInfo);
+        return { point: intersection.point, normal: worldNormal, /* ... 他の情報 ... */ axisInfo, center: faceCenterWorld };
+    }
+    return null;
+}
+
+function getLocalAxisInfoFromWorldNormal(worldNormal, objectMatrix) {
+    // ... (ローカル法線計算と軸・向き判定) ...
+    return { axisIndex, sign };
+}
+
+function getFaceCenterWorld(objectMatrix, axisInfo) {
+    // ... (ローカル軸と厚みから中心を計算しワールド変換) ...
+    return localCenter.applyMatrix4(objectMatrix);
+}
+                     </code></pre>
+                 </div>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.4. せん断 (Shear) 変形 (`applyShear`)</strong></summary>
+            <div class="content">
+                <p>この操作は、「選択した面を、スクリーンに平行な平面上でマウスカーソルに追従させる」ようにブロックを変形させます。</p>
+                <p><strong>処理の流れ (`applyShear` 関数内):</strong></p>
+                <ol>
+                    <li><strong>基準平面と現在位置の特定:</strong> `onPointerDown` で設定されたカメラ垂直平面 (`dragPlaneCameraNormal`) と、現在のマウス座標 (`currentMouse`) から、平面上の現在の交点 (`currentPointOnPlane`) を `intersectPlane` で計算します。</li>
+                    <li><strong>移動ベクトルの計算:</strong> 平面上のドラッグ開始点 (`dragStartPointOnPlane`) から現在の交点 (`currentPointOnPlane`) へのベクトル (`dragVector`) を計算します。これが、スクリーン上でマウスをどれだけ動かしたかをワールド空間で表すベクトルになります。</li>
+                    <li><strong>変形の適用:</strong>
+                        <ul>
+                            <li>ドラッグ開始時の行列 (`initialBlockMatrix`) をコピーします。</li>
+                            <li>操作面のローカル軸インデックス (`normalAxisIndex`) と向き (`sign`) を取得します。</li>
+                            <li>対応する基底ベクトル (`normalBasis`) を取得します。</li>
+                            <li><code>normalBasis.addScaledVector(dragVector, sign)</code> を実行します。これにより、スクリーン上の移動ベクトルが、面の向きに応じてスケーリングされ、基底ベクトルに加算されます。結果として、面がスクリーンと平行に移動するような変形が起こります。</li>
+                            <li>新しい基底ベクトルを `setBasisVector` で行列に設定します。</li>
+                        </ul>
+                    </li>
+                    <li><strong>体積チェックと更新:</strong> 更新後の行列 (`matrixToUpdate`) の行列式の絶対値が `MIN_VOLUME_THRESHOLD` 以上かチェックします。
+                        <ul>
+                            <li>**OKの場合:** `block.matrix` を更新（スナップ前）。`matrixToUpdate` を `roundMatrixElements` で整数化・クランプし、`ghostBlock.matrix` を更新。</li>
+                            <li>**NGの場合:** 行列を更新せず、コンソールに警告を出力します。</li>
+                        </ul>
+                    </li>
+                </ol>
+                 <div class="code-block">
+                     <p>関連コード (`applyShear` 関数):</p>
+                     <pre><code class="language-javascript">
+function applyShear(dragInfo) {
+    const { face, dragStartPointOnPlane, currentMouse, initialBlockMatrix, dragPlaneCameraNormal } = dragInfo;
+    if (!face || !face.axisInfo || !dragStartPointOnPlane) return;
+
+    // 1. Calculate current intersection on the camera-normal plane
+    const currentPointOnPlane = intersectPlane(currentMouse, dragPlaneCameraNormal, _vec);
+    if (!currentPointOnPlane) return;
+
+    // 2. Calculate the drag vector on that plane
+    const dragVector = _vec2.copy(currentPointOnPlane).sub(dragStartPointOnPlane);
+
+    // 3. Apply this drag vector to the initial matrix's basis vector
+    const matrixToUpdate = initialBlockMatrix.clone();
+    const normalAxisIndex = face.axisInfo.axisIndex;
+    const sign = face.axisInfo.sign;
+    const normalBasis = getBasisVector(matrixToUpdate, normalAxisIndex, _vec3);
+
+    // Add the calculated dragVector (scaled by face sign)
+    normalBasis.addScaledVector(dragVector, sign);
+    setBasisVector(matrixToUpdate, normalAxisIndex, normalBasis);
+
+    // 5. Check determinant before applying
+    if (Math.abs(matrixToUpdate.determinant()) >= MIN_VOLUME_THRESHOLD) {
+        block.matrix.copy(matrixToUpdate);        // Update realtime block
+        roundMatrixElements(matrixToUpdate);      // Round and clamp for ghost
+        ghostBlock.matrix.copy(matrixToUpdate);   // Update ghost block
+    } else {
+        console.warn("Shear resulted in near-zero volume. Operation limited.");
+    }
+}
+                     </code></pre>
+                 </div>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.5. ストレッチ (Stretch) 変形 (`applyStretch`)</strong></summary>
+            <div class="content">
+                <p>この操作は、「マウスのスクリーン上の動きを、操作している面の法線方向への『押し引き』量に変換し、ブロックを伸縮させる」ことを目指します。</p>
+                <p><strong>処理の流れ (`applyStretch` 関数内):</strong></p>
+                <ol>
+                    <li><strong>スクリーン移動量の計算:</strong> 前フレームからのマウスのスクリーン座標の差分 (`deltaX`, `deltaY`) を計算します。</li>
+                    <li><strong>ワールド移動ベクトルの計算:</strong> `deltaX`, `deltaY` と現在のカメラの向きから、ワールド空間でのマウスの移動ベクトル `screenMoveVector` を計算します。</li>
+                    <li><strong>法線方向への射影:</strong> `screenMoveVector` を、操作対象の面の現在のワールド法線ベクトル (`face.normal`) に射影し、法線方向への移動量 `mouseMoveAlongNormal` を計算します。これが「押し引き」の強さを表します。</li>
+                    <li><strong>ストレッチ量の決定:</strong> `mouseMoveAlongNormal` に感度 `STRETCH_SENSITIVITY` を掛けて、最終的なストレッチ量 `stretchAmount` を決定します。</li>
+                    <li><strong>新しい長さの計算:</strong>
+                        <ul>
+                            <li>現在のブロック行列 (`block.matrix`) をコピーします (`matrixToUpdate`)。</li>
+                            <li>操作面のローカル軸 (`normalAxisIndex`) に対応する基底ベクトル (`basisVector`) を取得します。</li>
+                            <li>現在の長さ `currentLength = basisVector.length()` を取得します。</li>
+                            <li>`newLength = currentLength + stretchAmount` で新しい長さを計算します。</li>
+                            <li>計算された `newLength` を `Math.max(MIN_THICKNESS, newLength)` で最小厚みにクランプします。</li>
+                        </ul>
+                    </li>
+                    <li><strong>更新の実行（長さが変わった場合）:</strong>
+                        <ul>
+                            <li>`newLength` が `currentLength` から十分に変化したか、または `MIN_THICKNESS` にクランプされた場合のみ更新処理に進みます。</li>
+                            <li>`basisVector.setLength(newLength)` で基底ベクトルの長さを更新します。</li>
+                            <li>更新した基底ベクトルを `setBasisVector` で `matrixToUpdate` に書き戻します。</li>
+                        </ul>
+                    </li>
+                    <li><strong>体積チェックと更新:</strong> 更新後の行列 (`matrixToUpdate`) の行列式の絶対値が `MIN_VOLUME_THRESHOLD` 以上かチェックします。
+                        <ul>
+                            <li>**OKの場合:** `block.matrix` を更新（スナップ前）。`matrixToUpdate` を `roundMatrixElements` で整数化・クランプし、`ghostBlock.matrix` を更新。</li>
+                            <li>**NGの場合:** 行列を更新せず、コンソールに警告を出力します。</li>
+                        </ul>
+                    </li>
+                </ol>
+                 <div class="code-block">
+                     <p>関連コード (`applyStretch` 関数):</p>
+                     <pre><code class="language-javascript">
+function applyStretch(dragInfo) {
+     const { face, currentMouse, lastMouse } = dragInfo;
+     if (!face || !face.axisInfo) return;
+     const deltaX = currentMouse.x - lastMouse.x;
+     const deltaY = currentMouse.y - lastMouse.y;
+     const axisInfo = face.axisInfo;
+
+     // 1. Calculate screen move vector in world space
+     const cameraRight = /* ... */; const cameraUp = /* ... */;
+     const screenMoveVector = /* ... deltaX, deltaY から計算 ... */;
+
+     // 2. Project onto world face normal
+     const mouseMoveAlongNormal = screenMoveVector.dot(face.normal);
+
+     // 3. Determine stretch amount with sensitivity
+     const stretchAmount = mouseMoveAlongNormal * STRETCH_SENSITIVITY;
+
+     // 4. Calculate new length based on current matrix
+     const matrixToUpdate = block.matrix.clone();
+     const normalAxisIndex = axisInfo.axisIndex;
+     const basisVector = getBasisVector(matrixToUpdate, normalAxisIndex, _vec);
+     const currentLength = basisVector.length();
+     if (currentLength < 1e-6) { return; } // Avoid NaN
+
+     // 5. Clamp new length
+     let newLength = currentLength + stretchAmount;
+     newLength = Math.max(MIN_THICKNESS, newLength);
+
+     // 6. Update if changed significantly or clamped
+     if (Math.abs(newLength - currentLength) > 1e-4 || newLength === MIN_THICKNESS) {
+         basisVector.setLength(newLength);
+         setBasisVector(matrixToUpdate, normalAxisIndex, basisVector);
+
+         // 7. Check determinant before applying
+         if (Math.abs(matrixToUpdate.determinant()) >= MIN_VOLUME_THRESHOLD) {
+             block.matrix.copy(matrixToUpdate);
+             roundMatrixElements(matrixToUpdate);
+             ghostBlock.matrix.copy(matrixToUpdate);
+         } else {
+             console.warn("Stretch resulted in near-zero volume. Operation limited.");
+         }
+     }
+ }
+                     </code></pre>
+                 </div>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.6. ゴーストプレビュー</strong></summary>
+            <div class="content">
+                <p>ユーザーが変形操作中に、最終的に確定される形状（グリッドスナップや制限が適用された後）を視覚的に確認できるように、半透明の「ゴースト」ブロックを表示します。</p>
+                <ul>
+                    <li><strong>オブジェクト:</strong> 不透明な `block` とは別に、半透明マテリアルを持つ `ghostBlock` が用意されています。</li>
+                    <li><strong>表示タイミング:</strong> `onPointerDown` でドラッグが開始されると `ghostBlock.visible = true` となり、`onPointerUp` でドラッグが終了すると `ghostBlock.visible = false` となります。</li>
+                    <li><strong>形状の同期:</strong>
+                        <ul>
+                            <li>ドラッグ開始時 (`onPointerDown`) に、`ghostBlock` の行列は `block` の現在の行列に同期され、すぐに `roundMatrixElements` でスナップされます。</li>
+                            <li>ドラッグ中 (`onPointerMove` -> `applyShear`/`applyStretch`) に、`block` の行列がスナップ前のリアルタイムな変形を反映するのに対し、`ghostBlock` の行列は `roundMatrixElements` でスナップされた後の状態を反映します。</li>
+                            <li>ドラッグ終了時 (`onPointerUp`) に、`block` の行列が最終的な `ghostBlock` の行列に設定され、見た目が一致した上でゴーストが消えます。</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.7. グリッドスナップと体積制限 (`roundMatrixElements`, `MIN_VOLUME_THRESHOLD`)</strong></summary>
+            <div class="content">
+                <p>Stormworksの仕様に合わせて、ブロックの形状が特定の制約を満たすように調整する処理です。</p>
+                <ul>
+                    <li><strong>整数行列 (Grid Snap):</strong> Stormworksの回転/スケール行列の要素は整数であるため、`roundMatrixElements` 関数内で `Math.round()` を使って行列の主要な要素を整数に丸めています。これが実質的なグリッドスナップとして機能します。</li>
+                    <li><strong>最小厚み (`MIN_THICKNESS`):</strong> 整数化によって基底ベクトルの長さがゼロ（または非常に小さく）なることを防ぐため、`roundMatrixElements` 内で、整数化後に各基底ベクトルの長さをチェックし、`MIN_THICKNESS` 未満であれば、その長さを強制的に `MIN_THICKNESS` に修正（クランプ）します。これにより、ブロックが完全に見えなくなったり、Raycasting が失敗したりするリスクを低減します。<strong>注意:</strong> クランプ処理により、最終的な行列要素が厳密には整数でなくなる場合がありますが、これは最小厚みを維持するための仕様です。</li>
+                    <li><strong>最小体積 (`MIN_VOLUME_THRESHOLD`):</strong> せん断変形などによってブロックが潰れて体積がゼロ（縮退）になるのを防ぐため、`applyShear` と `applyStretch` の中で、変形後の行列の行列式 (`determinant`) の絶対値を計算し、それが `MIN_VOLUME_THRESHOLD` 未満になるような変形は適用しないように制限しています。</li>
+                </ul>
+                 <div class="code-block">
+                     <p>関連コード (`roundMatrixElements` 関数):</p>
+                     <pre><code class="language-javascript">
+function roundMatrixElements(matrix) {
+    const te = matrix.elements;
+
+    // 1. First, round the relevant elements to integers
+    // ... (Math.round() for elements 0,1,2, 4,5,6, 8,9,10) ...
+
+    // 2. Then, check the length of each basis vector AFTER rounding and clamp if needed
+    for (let i = 0; i < 3; i++) {
+        const basis = getBasisVector(matrix, i, _vec);
+        const lengthSq = basis.lengthSq();
+        if (lengthSq < MIN_THICKNESS * MIN_THICKNESS) {
+            if (lengthSq > 1e-9) { basis.setLength(MIN_THICKNESS); }
+            else { basis.set(0,0,0).setComponent(i, MIN_THICKNESS); }
+            setBasisVector(matrix, i, basis); // Set clamped vector back
+        }
+    }
+}
+                     </code></pre>
+                 </div>
+            </div>
+        </details>
+
+        <details>
+            <summary><strong>3.8. 行列表示 (`updateMatrixDisplay`, `matrixToRotationString`)</strong></summary>
+            <div class="content">
+                <p>現在のブロックの確定後の形状を表す回転・スケール・せん断行列（左上3x3）をUIに表示します。</p>
+                <ul>
+                    <li><strong>表示タイミング:</strong> ドラッグ中およびドラッグ終了時、リセット時に `updateMatrixDisplay` 関数が呼び出されます。</li>
+                    <li><strong>表示内容:</strong> ドラッグ中は `ghostBlock`（スナップ後）の行列を、ドラッグ終了後や初期状態では `block` の行列を `matrixToRotationString` 関数でフォーマットして表示します。</li>
+                    <li><strong>`matrixToRotationString` 関数:</strong>
+                        <ul>
+                            <li>入力された行列をコピーし、`roundMatrixElements` を適用して表示用の一時的な丸め・クランプ処理を行います（元の行列は変更しません）。</li>
+                            <li>丸め・クランプ後の行列要素 `te[0]` から `te[10]` まで（左上3x3部分）を、StormworksのXMLで使われる列優先順 (`r11,r21,r31,r12,r22,r32,r13,r23,r33`) でカンマ区切りの文字列に変換して返します。</li>
+                        </ul>
+                    </li>
+                </ul>
+                 <div class="code-block">
+                     <p>関連コード (`matrixToRotationString` 関数):</p>
+                     <pre><code class="language-javascript">
+function matrixToRotationString(matrix) {
+    _mat.copy(matrix); // Copy matrix to avoid modifying the original
+    roundMatrixElements(_mat); // Apply rounding and clamping for display consistency
+    const te = _mat.elements;
+    return [
+        te[0], te[1], te[2], // Column 1 (X Basis)
+        te[4], te[5], te[6], // Column 2 (Y Basis)
+        te[8], te[9], te[10] // Column 3 (Z Basis)
+    ].join(',');
+}
+                     </code></pre>
+                 </div>
+            </div>
+        </details>
+
+    </section>
+
+    <section id="full-code">
+        <h2>4. コード全体</h2>
+        <details>
+            <summary>index.html (クリックで展開)</summary>
+            <div class="content code-block">
+                <pre><code class="language-html">
+&lt;!DOCTYPE html&gt;
+&lt;html lang="ja"&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;title&gt;せん断/ストレッチ エディタ (ゴーストプレビュー付き)&lt;/title&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;style&gt;
+        /* ... CSS ... */
+    &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;canvas id="c"&gt;&lt;/canvas&gt;
+    &lt;div id="controls"&gt;
+        &lt;!-- ... UI elements ... --&gt;
+    &lt;/div&gt;
+
+    &lt;script type="importmap"&gt;
+        /* ... Importmap ... */
+    &lt;/script&gt;
+
+    &lt;script type="module"&gt;
+        // ======================================================================
+        //               せん断/ストレッチ エディタ JavaScript コード
+        // ======================================================================
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 定数定義 ---
+        // ...
+
+        // --- グローバル変数 ---
+        // ...
+
+        // --- 計算用一時変数 ---
+        // ...
+
+        // --- 行列操作ユーティリティ関数 ---
+        // ... (getBasisVector, setBasisVector, roundMatrixElements, matrixToRotationString) ...
+
+        // --- ヘルパー関数 ---
+        // ... (getLocalAxisInfoFromWorldNormal, getFaceCenterWorld, getIntersectedFace, intersectPlane) ...
+
+        // --- 変形ロジック関数 ---
+        // ... (applyShear, applyStretch) ...
+
+        // --- イベントハンドラ ---
+        // ... (updateMouseCoords, onPointerDown, onPointerMove, onPointerUp, onWindowResize, resetBlockTransform, updateMatrixDisplay) ...
+
+        // --- 初期化関数 ---
+        // ... (init) ...
+
+        // --- アニメーションループ ---
+        // ... (animate) ...
+
+        // --- 初期化とアニメーション開始 ---
+        init();
+        animate();
+
+    &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+                </code></pre>
+                <p>（上記のコードブロック内には、実際の完全なJavaScriptコードが挿入されている想定です）</p>
+            </div>
+        </details>
+    </section>
+
+    <section id="summary">
+        <h2>5. まとめと今後の課題</h2>
+        <p>このエディタは、マウス操作による直感的なせん断・ストレッチ変形、ゴーストプレビューによるスナップ結果の視覚化、およびStormworksの仕様に合わせた整数行列・最小厚み・体積制限を実現したプロトタイプです。</p>
+        <p><strong>今後の課題・改善点候補:</strong></p>
+        <ul>
+            <li><strong>縮退時のインタラクション改善:</strong> 現在は縮退（体積ゼロ）に近い状態になると操作を制限していますが、Raycastingが失敗しやすくなる問題は残っています。縮退状態でも安定して面を選択し、操作を再開できるような、より高度なインタラクションの実装が考えられます（例: バウンディングボックスや隣接面を利用した選択）。</li>
+            <li><strong>パフォーマンス:</strong> ブロック数が増えた場合のパフォーマンスは考慮されていません。InstancedMeshなどを使用した最適化が必要です。</li>
+            <li><strong>操作モードの追加:</strong> 回転、移動、複数ブロック選択、コンポーネント接続など、実際のStormworksエディタにあるような機能の追加。</li>
+            <li><strong>UI/UXの改善:</strong> 現在の操作モードや選択状態をより分かりやすく表示するUI、アンドゥ/リドゥ機能など。</li>
+            <li><strong>XML入出力:</strong> 現在のブロック状態をStormworksのビークルXML形式で保存・読み込みする機能。</li>
+        </ul>
+    </section>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        // Mermaidの初期化
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+</body>
+</html>

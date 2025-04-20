@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>せん断/ストレッチ エディタ (ゴーストプレビュー付き)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* CSS スタイル (変更なし) */
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #controls label { font-weight: bold; margin-bottom: 3px; }
+        #info { margin-top: 5px; font-size: 0.9em; }
+        button { padding: 5px; }
+        #matrixDisplay {
+            font-family: monospace;
+            font-size: 0.9em;
+            background-color: #eee;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <div id="controls">
+        <button id="resetButton">ブロックをリセット</button>
+        <div>
+             <label for="matrixDisplay">確定後の行列 (r):</label>
+             <div id="matrixDisplay">1,0,0,0,1,0,0,0,1</div>
+        </div>
+        <div id="info">
+            左ドラッグ: せん断 (Shear)<br>
+            Shift + 左ドラッグ: 伸縮 (Stretch)<br>
+            右ドラッグ: 視点回転<br>
+            中ドラッグ: 視点移動<br>
+            ホイール: ズーム
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        // ライブラリのインポート
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 定数定義 ---
+        const BLOCK_SIZE = 1.0;                     // ブロックの基本サイズ
+        const STRETCH_SENSITIVITY = 10.0;           // ストレッチ操作の感度 (大きいほど速い)
+        const GHOST_OPACITY = 0.4;                  // ゴースト表示時の不透明度
+        const MIN_THICKNESS = 0.001;                // 許容される最小の厚み (基底ベクトル長)
+        const MIN_VOLUME_THRESHOLD = 1e-4;          // 許容される最小の体積 (行列式の絶対値)
+
+        // --- グローバル変数 ---
+        // Three.js 基本要素
+        let scene, camera, renderer, controls;
+        // ブロックオブジェクト (block: リアルタイム変形, ghostBlock: スナップ後のプレビュー)
+        let block, ghostBlock, initialMatrix;
+        // マウス・Raycasting関連
+        const mouse = new THREE.Vector2();          // 正規化デバイス座標 (-1 to +1)
+        const raycaster = new THREE.Raycaster();
+        // 時間管理
+        const clock = new THREE.Clock();
+        // UI要素
+        const matrixDisplayElement = document.getElementById('matrixDisplay'); // 行列表示用Div
+        const resetButton = document.getElementById('resetButton');          // リセットボタン
+
+        // ドラッグ操作の状態管理
+        const dragState = {
+            isDragging: false,                      // ドラッグ中か否か
+            mode: null,                             // 現在の操作モード ('shear' または 'stretch')
+            startPoint: new THREE.Vector3(),        // ドラッグ開始時のブロック面上の交点 (ワールド座標)
+            startMouse: new THREE.Vector2(),        // ドラッグ開始時のマウス座標 (NDC)
+            currentMouse: new THREE.Vector2(),      // 現在のマウス座標 (NDC)
+            lastMouse: new THREE.Vector2(),         // 1フレーム前のマウス座標 (NDC)
+            face: null,                             // ドラッグ中の面情報 { normal, materialIndex, axisInfo, center }
+            dragPlaneCameraNormal: new THREE.Plane(), // せん断操作で使用するカメラに垂直な平面
+            dragStartPointOnPlane: new THREE.Vector3(), // せん断操作のドラッグ開始点 (上記平面上)
+            initialBlockMatrix: new THREE.Matrix4(), // ドラッグ開始時のブロック行列
+        };
+
+        // --- 計算用一時変数 (メモリ確保削減のため) ---
+        const _mat = new THREE.Matrix4();
+        const _vec = new THREE.Vector3();
+        const _vec2 = new THREE.Vector3();
+        const _vec3 = new THREE.Vector3();
+        const _quat = new THREE.Quaternion();
+
+        // --- 行列操作ユーティリティ関数 ---
+
+        /**
+         * 行列から指定された軸の基底ベクトル（列ベクトル）を取得します。
+         * @param {THREE.Matrix4} matrix - 対象の行列
+         * @param {number} axisIndex - 軸インデックス (0:X, 1:Y, 2:Z)
+         * @param {THREE.Vector3} [targetVector=new THREE.Vector3()] - 結果を格納するベクトル
+         * @returns {THREE.Vector3} 基底ベクトル
+         */
+        function getBasisVector(matrix, axisIndex, targetVector = new THREE.Vector3()) {
+            const te = matrix.elements; // 列優先配列
+            const offset = axisIndex * 4;
+            return targetVector.set(te[offset + 0], te[offset + 1], te[offset + 2]);
+        }
+
+        /**
+         * 行列の指定された軸の基底ベクトル（列ベクトル）を設定します。
+         * 注意: この関数はベクトル要素の丸めや長さのクランプを行いません。
+         * @param {THREE.Matrix4} matrix - 対象の行列 (変更されます)
+         * @param {number} axisIndex - 軸インデックス (0:X, 1:Y, 2:Z)
+         * @param {THREE.Vector3} vector - 設定するベクトル
+         */
+        function setBasisVector(matrix, axisIndex, vector) {
+            const te = matrix.elements;
+            const offset = axisIndex * 4;
+            te[offset + 0] = vector.x; te[offset + 1] = vector.y; te[offset + 2] = vector.z;
+            // アフィン変換行列の形式を維持
+            te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
+        }
+
+        /**
+         * 行列の回転・スケール・せん断部分の要素を整数に丸め、
+         * さらに各基底ベクトルの長さが MIN_THICKNESS 未満にならないようにクランプします。
+         * @param {THREE.Matrix4} matrix - 対象の行列 (変更されます)
+         */
+        function roundMatrixElements(matrix) {
+            const te = matrix.elements;
+
+            // 1. まず要素を整数に丸める
+            te[0] = Math.round(te[0]); te[1] = Math.round(te[1]); te[2] = Math.round(te[2]);
+            te[4] = Math.round(te[4]); te[5] = Math.round(te[5]); te[6] = Math.round(te[6]);
+            te[8] = Math.round(te[8]); te[9] = Math.round(te[9]); te[10] = Math.round(te[10]);
+            te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1; // アフィン変換維持
+
+            // 2. 丸めた後、各基底ベクトルの長さをチェックし、必要なら MIN_THICKNESS にクランプ
+            for (let i = 0; i < 3; i++) {
+                const basis = getBasisVector(matrix, i, _vec); // 丸め後の基底ベクトル取得
+                const lengthSq = basis.lengthSq();
+
+                if (lengthSq < MIN_THICKNESS * MIN_THICKNESS) {
+                    if (lengthSq > 1e-9) { // ゼロベクトルではなかったが、丸めで小さくなりすぎた場合
+                        basis.setLength(MIN_THICKNESS); // 元の方向を維持しつつ長さを最小値に
+                    } else { // 完全にゼロベクトルになった場合
+                        basis.set(0,0,0).setComponent(i, MIN_THICKNESS); // 軸方向に最小厚みのベクトルを設定
+                    }
+                    // クランプしたベクトルを行列に書き戻す（このベクトル要素は整数とは限らない）
+                    setBasisVector(matrix, i, basis);
+                }
+            }
+        }
+
+        /**
+         * 行列の左上3x3部分をStormworksの 'r' 属性のようなカンマ区切り文字列に変換します。
+         * 表示用に、内部で丸めとクランプ処理を行います。
+         * @param {THREE.Matrix4} matrix - 対象の行列
+         * @returns {string} "r11,r21,r31,r12,r22,r32,r13,r23,r33" 形式の文字列 (列優先順)
+         */
+        function matrixToRotationString(matrix) {
+            _mat.copy(matrix); // 元の行列を壊さないようにコピー
+            roundMatrixElements(_mat); // 表示用に丸め＆クランプ
+            const te = _mat.elements;
+            return [
+                te[0], te[1], te[2], // Column 1 (X Basis)
+                te[4], te[5], te[6], // Column 2 (Y Basis)
+                te[8], te[9], te[10] // Column 3 (Z Basis)
+            ].join(',');
+        }
+
+        // --- ヘルパー関数 ---
+
+        /**
+         * ワールド空間の法線ベクトルとオブジェクトの行列から、
+         * 最も近いローカル軸のインデックスとその軸に対する面の向き（sign）を取得します。
+         * @param {THREE.Vector3} worldNormal - ワールド空間での面の法線ベクトル
+         * @param {THREE.Matrix4} objectMatrix - オブジェクトのワールド行列
+         * @returns {{axisIndex: number, sign: number}} ローカル軸インデックス(0-2)と向き(1 or -1)
+         */
+        function getLocalAxisInfoFromWorldNormal(worldNormal, objectMatrix) {
+            const localNormal = worldNormal.clone();
+            // オブジェクトの回転だけを取り出して逆回転を適用し、ローカル座標系の法線を求める
+            objectMatrix.decompose(new THREE.Vector3(), _quat, new THREE.Vector3());
+            const invQuat = _quat.clone().invert();
+            localNormal.applyQuaternion(invQuat);
+            localNormal.normalize();
+
+            let maxDot = -1;
+            let axisIndex = 0;
+            let sign = 1;
+            // 各ローカル軸(X, Y, Z)とローカル法線の内積を比較
+            for (let i = 0; i < 3; i++) {
+                _vec.set(0, 0, 0).setComponent(i, 1); // (1,0,0), (0,1,0), (0,0,1)
+                const dot = localNormal.dot(_vec);    // 内積を計算
+                const absDot = Math.abs(dot);        // 絶対値を取得
+
+                if (absDot > maxDot) { // 最も近い軸を探す
+                    maxDot = absDot;
+                    axisIndex = i;
+                    sign = Math.sign(dot);      // 内積の符号で面の向きを判定
+                    if (sign === 0) sign = 1; // 稀に0になる場合、正方向とする
+                }
+            }
+            return { axisIndex, sign };
+        }
+
+        /**
+         * 指定されたローカル軸情報に基づいて、面のワールド中心座標を計算します。
+         * @param {THREE.Matrix4} objectMatrix - オブジェクトのワールド行列
+         * @param {{axisIndex: number, sign: number}} axisInfo - ローカル軸情報
+         * @returns {THREE.Vector3} 面のワールド中心座標
+         */
+        function getFaceCenterWorld(objectMatrix, axisInfo) {
+            const localCenter = _vec.set(0, 0, 0);
+            // 現在の基底ベクトルの長さを考慮して中心までのオフセットを計算
+            const basis = getBasisVector(objectMatrix, axisInfo.axisIndex, _vec2);
+            const thickness = Math.max(basis.length(), MIN_THICKNESS); // 最小厚さを考慮
+            // ローカル中心 = (軸方向ベクトル) * sign * (厚み/2)
+            localCenter.setComponent(axisInfo.axisIndex, axisInfo.sign * thickness / 2);
+            // ローカル座標をワールド座標に変換
+            return localCenter.applyMatrix4(objectMatrix);
+        }
+
+        /**
+         * マウス座標からRaycastingを行い、操作対象ブロックの面情報を取得します。
+         * 縮退している可能性がある場合は null を返すことがあります。
+         * @param {THREE.Vector2} mouseCoords - 正規化デバイス座標
+         * @returns {object | null} 面情報 { point, normal, materialIndex, axisInfo, center } または null
+         */
+        function getIntersectedFace(mouseCoords) {
+            // 縮退チェック（簡易版）：基底ベクトルの長さがゼロに近い場合は警告し、操作を試みる
+            let degenerate = false;
+            for (let i=0; i<3; ++i){
+                if(getBasisVector(block.matrix, i, _vec2).lengthSq() < 1e-6){
+                    degenerate = true;
+                    break;
+                }
+            }
+            if(degenerate){ console.warn("Block basis vector length is near zero."); }
+
+            // Raycasting実行
+            raycaster.setFromCamera(mouseCoords, camera);
+            const intersects = raycaster.intersectObject(block); // 不透明なブロックを対象
+
+            if (intersects.length > 0 && intersects[0].face) {
+                const intersection = intersects[0];
+                // ワールド法線を計算
+                const worldNormal = intersection.face.normal.clone().transformDirection(block.matrixWorld).normalize();
+                // 法線が無効（NaN or ゼロベクトル）なら失敗
+                if (isNaN(worldNormal.x) || worldNormal.lengthSq() < 0.5) {
+                     console.warn("Invalid face normal detected.");
+                     return null;
+                 }
+                // ローカル軸情報と面の中心を計算
+                const axisInfo = getLocalAxisInfoFromWorldNormal(worldNormal, block.matrix);
+                const faceCenterWorld = getFaceCenterWorld(block.matrix, axisInfo);
+                return {
+                    point: intersection.point, // 交点座標 (ワールド)
+                    normal: worldNormal,       // 面の法線 (ワールド)
+                    materialIndex: intersection.face.materialIndex, // 面のマテリアルインデックス
+                    axisInfo: axisInfo,        // ローカル軸情報 { axisIndex, sign }
+                    center: faceCenterWorld    // 面の中心座標 (ワールド)
+                };
+            }
+            return null; // 交差なし
+        }
+
+        /**
+         * マウス座標からのレイと指定された平面との交点を計算します。
+         * @param {THREE.Vector2} mouseCoords - 正規化デバイス座標
+         * @param {THREE.Plane} plane - 交差対象の平面
+         * @param {THREE.Vector3} target - 結果を格納するベクトル
+         * @returns {THREE.Vector3 | null} 交点座標、交差しない場合は null
+         */
+        function intersectPlane(mouseCoords, plane, target) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            return raycaster.ray.intersectPlane(plane, target);
+        }
+
+        // --- 変形ロジック関数 ---
+
+        /**
+         * せん断変形を実行します。
+         * カメラに垂直な平面上でのマウス移動ベクトルを計算し、それを基底ベクトルに適用します。
+         * @param {object} dragInfo - ドラッグ状態情報 (dragStateのコピー)
+         */
+        function applyShear(dragInfo) {
+            const { face, dragStartPointOnPlane, currentMouse, initialBlockMatrix, dragPlaneCameraNormal } = dragInfo;
+            // 必要な情報が揃っているかチェック
+            if (!face || !face.axisInfo || !dragStartPointOnPlane) return;
+
+            // 1. カメラに垂直な平面上の現在の交点を計算
+            const currentPointOnPlane = intersectPlane(currentMouse, dragPlaneCameraNormal, _vec);
+            if (!currentPointOnPlane) return; // 交差しない場合は何もしない
+
+            // 2. 平面上のドラッグ開始点からの移動ベクトルを計算
+            const dragVector = _vec2.copy(currentPointOnPlane).sub(dragStartPointOnPlane);
+
+            // 3. ドラッグ開始時の行列をベースに変形を適用
+            const matrixToUpdate = initialBlockMatrix.clone();
+            const normalAxisIndex = face.axisInfo.axisIndex; // 操作面のローカル軸
+            const sign = face.axisInfo.sign;                 // 操作面の向き
+            const normalBasis = getBasisVector(matrixToUpdate, normalAxisIndex, _vec3); // 対応する基底ベクトル
+
+            // 4. 移動ベクトルを面の向きに応じてスケーリングして基底ベクトルに加算
+            normalBasis.addScaledVector(dragVector, sign);
+            setBasisVector(matrixToUpdate, normalAxisIndex, normalBasis); // 新しい基底ベクトルを設定
+
+            // 5. 体積チェック（縮退防止）
+            if (Math.abs(matrixToUpdate.determinant()) >= MIN_VOLUME_THRESHOLD) {
+                block.matrix.copy(matrixToUpdate);        // リアルタイムブロック更新 (非丸め)
+                roundMatrixElements(matrixToUpdate);      // ゴースト用に丸め＆クランプ
+                ghostBlock.matrix.copy(matrixToUpdate);   // ゴーストブロック更新
+            } else {
+                console.warn("Shear resulted in near-zero volume. Operation limited.");
+            }
+        }
+
+        /**
+         * ストレッチ（伸縮）変形を実行します。
+         * スクリーンのマウス移動ベクトルを計算し、それを面の法線方向に射影した量で伸縮させます。
+         * @param {object} dragInfo - ドラッグ状態情報 (dragStateのコピー)
+         */
+        function applyStretch(dragInfo) {
+             const { face, currentMouse, lastMouse } = dragInfo;
+             // 必要な情報が揃っているかチェック
+             if (!face || !face.axisInfo) return;
+
+             // 1. スクリーンのマウス移動量を計算
+             const deltaX = currentMouse.x - lastMouse.x;
+             const deltaY = currentMouse.y - lastMouse.y;
+             const axisInfo = face.axisInfo; // 操作面のローカル軸情報
+
+             // 2. スクリーン移動量をワールド空間の移動ベクトルに変換
+             const cameraRight = _vec.set(1, 0, 0).applyQuaternion(camera.quaternion);
+             const cameraUp = _vec2.set(0, 1, 0).applyQuaternion(camera.quaternion);
+             const screenMoveVector = _vec3.set(0,0,0)
+                  .addScaledVector(cameraRight, deltaX)
+                  .addScaledVector(cameraUp, deltaY);
+
+             // 3. ワールド移動ベクトルを面のワールド法線方向に射影
+             const mouseMoveAlongNormal = screenMoveVector.dot(face.normal);
+
+             // 4. 射影量に感度を掛けてストレッチ量を決定
+             const stretchAmount = mouseMoveAlongNormal * STRETCH_SENSITIVITY;
+
+             // 5. 現在の行列をベースに変形を適用
+             const matrixToUpdate = block.matrix.clone(); // 現在のリアルタイム行列をコピー
+             const normalAxisIndex = axisInfo.axisIndex;  // 操作面のローカル軸
+             const basisVector = getBasisVector(matrixToUpdate, normalAxisIndex, _vec); // 対応する基底ベクトル
+             const currentLength = basisVector.length();
+
+             // 現在の長さがほぼゼロなら処理中断 (NaN防止)
+             if (currentLength < 1e-6) { return; }
+
+             // 6. 新しい長さを計算し、最小厚みでクランプ
+             let newLength = currentLength + stretchAmount;
+             newLength = Math.max(MIN_THICKNESS, newLength);
+
+             // 7. 長さが変化した場合のみ更新
+             if (Math.abs(newLength - currentLength) > 1e-4 || newLength === MIN_THICKNESS) {
+                 basisVector.setLength(newLength); // 新しい長さを設定
+                 setBasisVector(matrixToUpdate, normalAxisIndex, basisVector); // 行列に書き戻す
+
+                 // 8. 体積チェック（縮退防止）
+                 if (Math.abs(matrixToUpdate.determinant()) >= MIN_VOLUME_THRESHOLD) {
+                     block.matrix.copy(matrixToUpdate);      // リアルタイムブロック更新 (非丸め, 長さクランプ済み)
+                     roundMatrixElements(matrixToUpdate);    // ゴースト用に丸め＆クランプ
+                     ghostBlock.matrix.copy(matrixToUpdate); // ゴーストブロック更新
+                 } else {
+                     console.warn("Stretch resulted in near-zero volume. Operation limited.");
+                 }
+             }
+         }
+
+        // --- イベントハンドラ ---
+
+        /** マウス座標を正規化デバイス座標(NDC)に変換して更新 */
+        function updateMouseCoords(event) {
+            const rect = renderer.domElement.getBoundingClientRect(); // canvasの位置とサイズを取得
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+
+        /** ポインター（マウス左ボタン）押下時の処理 */
+        function onPointerDown(event) {
+            // 左ボタン以外は無視
+            if (event.button !== 0) return;
+            updateMouseCoords(event); // マウス座標更新
+            // マウス下の面情報を取得
+            const faceInfo = getIntersectedFace(mouse);
+
+            if (faceInfo) { // 面が見つかった場合のみドラッグ開始
+                dragState.isDragging = true;
+                // Shiftキーが押されていればストレッチモード、そうでなければせん断モード
+                dragState.mode = event.shiftKey ? 'stretch' : 'shear';
+                dragState.startPoint.copy(faceInfo.point); // ドラッグ開始点を記録
+                dragState.startMouse.copy(mouse);          // 開始マウス座標(NDC)を記録
+                dragState.currentMouse.copy(mouse);        // 現在マウス座標(NDC)を初期化
+                dragState.lastMouse.copy(mouse);           // 前回マウス座標(NDC)を初期化
+                dragState.face = faceInfo;                 // 操作対象の面情報を記録
+                dragState.initialBlockMatrix.copy(block.matrix); // ドラッグ開始時の行列を記録
+
+                // せん断モードの場合、カメラ垂直平面と開始点を設定
+                if (dragState.mode === 'shear') {
+                    const cameraForward = _vec.set(0, 0, -1).applyQuaternion(camera.quaternion);
+                    // 面の中心を通り、カメラに垂直な平面を設定
+                    dragState.dragPlaneCameraNormal.setFromNormalAndCoplanarPoint(cameraForward, faceInfo.center);
+                    // その平面上のドラッグ開始点を計算
+                    intersectPlane(mouse, dragState.dragPlaneCameraNormal, dragState.dragStartPointOnPlane);
+                }
+
+                // ゴースト表示の準備
+                ghostBlock.matrix.copy(block.matrix); // ゴーストを現在のブロック状態に同期
+                roundMatrixElements(ghostBlock.matrix); // ゴーストを初期スナップ状態にする
+                ghostBlock.visible = true;          // ゴーストを表示
+
+                controls.enabled = false;           // ドラッグ中はカメラ操作を無効化
+                document.body.style.cursor = 'grabbing'; // カーソルを掴む形に変更
+                updateMatrixDisplay();              // 行列表示を更新
+            } else {
+                // 面が見つからなかった（縮退などでRaycast失敗）場合のログ
+                console.log("No valid face intersected to start drag.");
+            }
+        }
+
+        /** ポインター（マウス）移動中の処理 */
+        function onPointerMove(event) {
+            // ドラッグ中でなければ何もしない
+            if (!dragState.isDragging) return;
+
+            updateMouseCoords(event); // マウス座標更新
+            // 前回のマウス座標を保存し、現在のマウス座標を更新
+            dragState.lastMouse.copy(dragState.currentMouse);
+            dragState.currentMouse.copy(mouse);
+
+            // 現在のモードに応じて変形処理を実行
+            if (dragState.mode === 'shear') {
+                applyShear({...dragState}); // dragStateのコピーを渡す
+            } else if (dragState.mode === 'stretch') {
+                applyStretch({...dragState}); // dragStateのコピーを渡す
+            }
+            // 変形が行われた可能性があるので行列表示を更新
+            updateMatrixDisplay();
+        }
+
+        /** ポインター（マウス左ボタン）解放時の処理 */
+        function onPointerUp(event) {
+            // 左ボタン以外は無視
+            if (event.button !== 0) return;
+            // ドラッグ中でなければ何もしない
+            if (!dragState.isDragging) return;
+
+            // ドラッグ終了処理
+            // 最終的なブロックの状態を、ゴースト（スナップ済み）の状態に確定させる
+            block.matrix.copy(ghostBlock.matrix);
+            // ゴーストを非表示にする
+            ghostBlock.visible = false;
+            // 行列表示を最終状態に更新
+            updateMatrixDisplay();
+
+            // ドラッグ状態をリセット
+            dragState.isDragging = false;
+            dragState.mode = null;
+            dragState.face = null;
+            controls.enabled = true; // カメラ操作を再度有効化
+            document.body.style.cursor = 'default'; // カーソルを元に戻す
+        }
+
+        /** ウィンドウリサイズ時の処理 */
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight; // カメラのアスペクト比更新
+            camera.updateProjectionMatrix();                      // プロジェクション行列更新
+            renderer.setSize(window.innerWidth, window.innerHeight); // レンダラーのサイズ更新
+        }
+
+        /** ブロックの変形を初期状態に戻す処理 */
+        function resetBlockTransform() {
+             block.matrix.copy(initialMatrix); // メインブロックを行列を初期状態に
+             ghostBlock.visible = false;       // ゴーストを非表示に
+             updateMatrixDisplay();            // 行列表示を更新
+        }
+
+        /** 画面上の行列表示を更新する処理 */
+        function updateMatrixDisplay() {
+            // ドラッグ中はゴースト（スナップ後）の行列を、そうでなければメインブロックの行列を表示
+            const matrixSource = ghostBlock.visible ? ghostBlock.matrix : block.matrix;
+            if (matrixDisplayElement && matrixSource) {
+                matrixDisplayElement.textContent = matrixToRotationString(matrixSource);
+            }
+        }
+
+        // --- 初期化関数 ---
+        function init() {
+            // シーン作成
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xdddddd); // 背景色
+
+            // カメラ作成
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(1.5, 1.5, 2.5); // 初期カメラ位置
+
+            // レンダラー作成
+            const canvas = document.querySelector('#c');
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.sortObjects = false; // 透明オブジェクトの描画順設定
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio); // 高解像度対応
+
+            // カメラコントロール作成
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // スムーズな慣性移動
+            controls.dampingFactor = 0.1;
+            controls.screenSpacePanning = false; // パン操作を地面基準に
+            controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }; // 左ドラッグ無効化
+            controls.enablePan = true; // 中（ホイール）ドラッグでのパン有効化
+
+            // ライト作成
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // 環境光
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // 平行光源
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            // ヘルパー作成（グリッドと軸）
+            const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+            scene.add(gridHelper);
+            const axesHelper = new THREE.AxesHelper(1);
+            scene.add(axesHelper);
+
+            // ブロックジオメトリ作成 (共有)
+            const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+
+            // リアルタイム表示用ブロック作成 (不透明)
+            const materials = [
+                new THREE.MeshStandardMaterial({color: 0xff0000, name: '+X'}), // 赤
+                new THREE.MeshStandardMaterial({color: 0x990000, name: '-X'}), // 暗赤
+                new THREE.MeshStandardMaterial({color: 0x00ff00, name: '+Y'}), // 緑
+                new THREE.MeshStandardMaterial({color: 0x009900, name: '-Y'}), // 暗緑
+                new THREE.MeshStandardMaterial({color: 0x0000ff, name: '+Z'}), // 青
+                new THREE.MeshStandardMaterial({color: 0x000099, name: '-Z'})  // 暗青
+            ];
+            block = new THREE.Mesh(geometry, materials);
+            block.matrixAutoUpdate = false; // 手動で行列を更新
+            initialMatrix = block.matrix.clone(); // 初期行列を保存
+            scene.add(block);
+
+             // ゴースト表示用ブロック作成 (半透明)
+            const ghostMaterials = materials.map(m => {
+                 const ghostMat = m.clone();
+                 ghostMat.opacity = GHOST_OPACITY;
+                 ghostMat.transparent = true;
+                 // ghostMat.depthWrite = false; // 必要に応じて深度書き込み無効化
+                 return ghostMat;
+             });
+            ghostBlock = new THREE.Mesh(geometry, ghostMaterials);
+            ghostBlock.matrixAutoUpdate = false;
+            ghostBlock.visible = false; // 最初は非表示
+            scene.add(ghostBlock);
+
+            // UIイベントリスナー設定
+            resetButton.addEventListener('click', resetBlockTransform);
+
+            // DOMイベントリスナー設定
+            renderer.domElement.addEventListener('pointerdown', onPointerDown);
+            renderer.domElement.addEventListener('pointermove', onPointerMove);
+            renderer.domElement.addEventListener('pointerup', onPointerUp);
+            renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault()); // 右クリックメニュー抑制
+            window.addEventListener('resize', onWindowResize);
+
+            // 初期行列表示
+            updateMatrixDisplay();
+        }
+
+        // --- アニメーションループ ---
+        function animate() {
+            requestAnimationFrame(animate); // 次のフレームを要求
+            const delta = clock.getDelta(); // フレーム間時間を取得
+
+            // ドラッグ中でなければカメラコントロールを更新
+            if (controls.enabled) {
+                controls.update(delta);
+            }
+
+            // シーンを描画
+            renderer.render(scene, camera);
+        }
+
+        // --- 初期化とアニメーション開始 ---
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

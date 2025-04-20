@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>回転行列 丸め処理 パフォーマンステスト</title>
+    <style>
+        body {
+            font-family: sans-serif;
+        }
+        #results {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+            white-space: pre-wrap; /* 結果を見やすくするため */
+            font-family: monospace;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .processing {
+            font-style: italic;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>回転行列 丸め処理 パフォーマンステスト</h1>
+    <p>下のボタンをクリックすると、5000個のランダムな3x3行列の要素を整数に丸める処理を50回連続で実行し、パフォーマンスを測定します。</p>
+
+    <button id="performanceTestBtn">パフォーマンステスト実行</button>
+
+    <div id="results">
+        テスト結果はここに表示されます。
+    </div>
+
+    <script>
+        const numMatrices = 500000; // 行列の数
+        const numTests = 50;      // テスト回数
+        const matrixSize = 9;   // 3x3行列の要素数
+
+        const resultsDiv = document.getElementById('results');
+        const testButton = document.getElementById('performanceTestBtn');
+
+        // ランダムな浮動小数点数を生成する関数 (正負含む)
+        function getRandomFloat(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+
+        // 行列を生成し、要素を丸める関数
+        function generateAndRoundMatrices() {
+            const matrices = [];
+            for (let i = 0; i < numMatrices; i++) {
+                const matrix = [];
+                for (let j = 0; j < matrixSize; j++) {
+                    // -100から100の範囲のランダムな浮動小数点数を生成
+                    const randomValue = getRandomFloat(-100.0, 100.0);
+                    // 整数に丸める
+                    matrix.push(Math.round(randomValue));
+                }
+                matrices.push(matrix);
+            }
+            // 生成・丸め処理を行った行列配列を返す（パフォーマンス測定が目的なので実際には使わない）
+            return matrices;
+        }
+
+        // パフォーマンステストを実行する関数
+        async function runPerformanceTest() {
+            testButton.disabled = true; // テスト中はボタンを無効化
+            resultsDiv.textContent = 'テスト実行中...';
+            resultsDiv.classList.add('processing');
+
+            const executionTimes = [];
+            let totalTime = 0;
+
+            // 非同期処理を挟んでUIが固まるのを防ぐ
+            await new Promise(resolve => setTimeout(resolve, 50)); // 少し待機
+
+            let resultsText = "--- パフォーマンステスト結果 ---\n\n";
+
+            for (let i = 0; i < numTests; i++) {
+                const startTime = performance.now();
+
+                // 行列の生成と丸め処理を実行
+                generateAndRoundMatrices();
+
+                const endTime = performance.now();
+                const duration = endTime - startTime;
+                executionTimes.push(duration);
+                totalTime += duration;
+
+                resultsText += `テスト ${i + 1}: ${duration.toFixed(3)} ms\n`;
+
+                // 進捗を少しずつ表示（UIが応答不能になるのを避けるため）
+                if ((i + 1) % 10 === 0 || i === numTests - 1) {
+                    resultsDiv.textContent = resultsText + "\n計算中...";
+                    // イベントループに処理を譲る
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+
+            const averageTime = totalTime / numTests;
+
+            resultsText += `\n--- 概要 ---\n`;
+            resultsText += `合計実行回数: ${numTests} 回\n`;
+            resultsText += `合計実行時間: ${totalTime.toFixed(3)} ms\n`;
+            resultsText += `平均実行時間: ${averageTime.toFixed(3)} ms\n`;
+
+            resultsDiv.textContent = resultsText;
+            resultsDiv.classList.remove('processing');
+            testButton.disabled = false; // テスト完了後にボタンを有効化
+        }
+
+        // ボタンにクリックイベントリスナーを追加
+        testButton.addEventListener('click', runPerformanceTest);
+
+    </script>
+
+</body>
+</html>

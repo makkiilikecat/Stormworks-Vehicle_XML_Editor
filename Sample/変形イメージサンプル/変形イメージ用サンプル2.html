@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Shear/Stretch Pattern Tester</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        #controls label { font-weight: bold; }
+        #info { margin-top: 5px; font-size: 0.9em; }
+        select, button { padding: 5px; }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <div id="controls">
+        <label for="patternSelect">Operation Pattern:</label>
+        <select id="patternSelect">
+            <option value="0">1: Original Fixed Plane + Local Vec + Sensitivity</option>
+            <option value="1">2: Fixed Plane + World Vec (No Sensitivity/Rounding)</option>
+            <option value="2">3: Camera Parallel Plane (Shear)</option>
+            <option value="3">4: Screen Delta Y Map (Stretch - Fixed)</option>
+            <option value="4">5: Direct Mapping (Shear - Simplified)</option>
+            <option value="5">6: Screen Delta Y Map (Stretch - Fixed)</option>
+            <option value="6">7: Screen Space Movement Mapping</option>
+            <option value="7">8: Incremental Screen Delta</option>
+        </select>
+        <button id="resetButton">Reset Block</button>
+        <div id="info">
+            Left Drag: Shear<br>
+            Shift + Left Drag: Stretch<br>
+            Right Drag: Rotate View<br>
+            Middle Drag: Pan View<br>
+            Wheel: Zoom
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Constants ---
+        const BLOCK_SIZE = 1.0;
+        const STRETCH_SENSITIVITY = 4.0; // Pattern 1 uses this
+        const SHEAR_SENSITIVITY = 4.0;   // Pattern 1 uses this
+        const STRETCH_INCREMENT_SCALE = 2.0; // Scale factor for screen delta Y
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls;
+        let block, initialMatrix;
+        const mouse = new THREE.Vector2();
+        const raycaster = new THREE.Raycaster();
+        const clock = new THREE.Clock();
+
+        // Drag state
+        const dragState = {
+            isDragging: false,
+            mode: null,
+            startPoint: new THREE.Vector3(),
+            currentPoint: new THREE.Vector3(), // Updated by fixed plane intersection
+            startMouse: new THREE.Vector2(),
+            currentMouse: new THREE.Vector2(),
+            lastMouse: new THREE.Vector2(),
+            face: null,
+            dragPlane: new THREE.Plane(),
+            // initialBlockMatrix: new THREE.Matrix4(), // No longer needed for incremental updates
+        };
+
+        // Pattern selection
+        let currentPatternIndex = 0;
+        const patternSelect = document.getElementById('patternSelect');
+        const resetButton = document.getElementById('resetButton');
+
+        // --- Matrix Utils ---
+        const _mat = new THREE.Matrix4();
+        const _vec = new THREE.Vector3();
+        const _pos = new THREE.Vector3();
+        const _quat = new THREE.Quaternion();
+        const _scale = new THREE.Vector3();
+
+        function getBasisVector(matrix, axisIndex, targetVector = new THREE.Vector3()) {
+            const te = matrix.elements;
+            const offset = axisIndex * 4;
+            return targetVector.set(te[offset + 0], te[offset + 1], te[offset + 2]);
+        }
+
+        function setBasisVector(matrix, axisIndex, vector, round = false) {
+            const te = matrix.elements;
+            const offset = axisIndex * 4;
+            te[offset + 0] = round ? Math.round(vector.x) : vector.x;
+            te[offset + 1] = round ? Math.round(vector.y) : vector.y;
+            te[offset + 2] = round ? Math.round(vector.z) : vector.z;
+            // Ensure matrix remains affine transform if modifying directly
+            te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
+        }
+
+        function roundMatrixElements(matrix) {
+            const te = matrix.elements;
+            for (let i = 0; i < 12; i++) {
+                if ((i + 1) % 4 !== 0) {
+                     te[i] = Math.round(te[i]);
+                }
+            }
+            te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
+        }
+
+        // --- Helper Functions ---
+        function getIntersectedFace(mouseCoords) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            const intersects = raycaster.intersectObject(block);
+            if (intersects.length > 0 && intersects[0].face) {
+                const intersection = intersects[0];
+                const worldNormal = intersection.face.normal.clone();
+                worldNormal.transformDirection(block.matrixWorld);
+                worldNormal.normalize();
+                return {
+                    point: intersection.point,
+                    normal: worldNormal,
+                    materialIndex: intersection.face.materialIndex
+                };
+            }
+            return null;
+        }
+
+        function intersectPlane(mouseCoords, plane, target) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            return raycaster.ray.intersectPlane(plane, target);
+        }
+
+        function intersectCameraParallelPlane(mouseCoords, pointOnPlane, target) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            const planeNormal = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, pointOnPlane);
+            return raycaster.ray.intersectPlane(plane, target);
+        }
+
+        function getLocalAxisIndexFromWorldNormal(worldNormal, objectMatrix) {
+            const localNormal = worldNormal.clone();
+            // Need position component for correct inverse transform if matrix has translation
+             const objPos = new THREE.Vector3();
+             const objQuat = new THREE.Quaternion();
+             const objScale = new THREE.Vector3();
+             objectMatrix.decompose(objPos, objQuat, objScale); // Decompose world matrix
+
+             // Inverse rotation/scale only for direction vector
+             const invQuat = objQuat.clone().invert();
+             localNormal.applyQuaternion(invQuat); // Apply inverse rotation
+             // If non-uniform scale, normalization after applying inverse scale might be needed
+
+            localNormal.normalize();
+
+            let maxDot = -1;
+            let axisIndex = 0;
+            for (let i = 0; i < 3; i++) {
+                _vec.set(0, 0, 0).setComponent(i, 1);
+                const dot = Math.abs(localNormal.dot(_vec));
+                if (dot > maxDot) {
+                    maxDot = dot;
+                    axisIndex = i;
+                }
+            }
+            return axisIndex;
+        }
+
+        // --- Pattern Implementations ---
+
+        // Pattern 1: Original Fixed Plane + Local Vec + Sensitivity
+        function applyShearPattern1(dragInfo) {
+            const { face, startPoint, currentPoint, initialBlockMatrix } = dragInfo; // Uses currentPoint from fixed plane
+            if (!face) return;
+
+            // Need initialBlockMatrix to get consistent local axis and apply sensitivity relative to start
+            const currentMatrix = block.matrix.clone(); // Work on current matrix state
+
+            const dragVectorWorld = currentPoint.clone().sub(startPoint);
+
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix); // Use current matrix for axis index
+            const otherAxes = [0, 1, 2].filter(i => i !== normalAxisIndex);
+
+            const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+            const shearVectorWorld = dragVectorWorld.clone().sub(normalComponent);
+
+            _mat.copy(currentMatrix).invert(); // Use current matrix inverse
+            const shearVectorLocal = shearVectorWorld.clone().transformDirection(_mat);
+
+            const shearAmount1 = Math.round(shearVectorLocal.getComponent(otherAxes[0]) * SHEAR_SENSITIVITY);
+            const shearAmount2 = Math.round(shearVectorLocal.getComponent(otherAxes[1]) * SHEAR_SENSITIVITY);
+
+            // Apply shear incrementally - tricky with rounding and sensitivity
+            // Let's restart from initial matrix + total shear amount for simplicity/stability here
+            const cleanMatrix = dragInfo.initialBlockMatrix.clone();
+            const normalBasis = getBasisVector(cleanMatrix, normalAxisIndex);
+            const basis1 = getBasisVector(cleanMatrix, otherAxes[0]);
+            const basis2 = getBasisVector(cleanMatrix, otherAxes[1]);
+
+            normalBasis.addScaledVector(basis1, shearAmount1);
+            normalBasis.addScaledVector(basis2, shearAmount2);
+
+            setBasisVector(cleanMatrix, normalAxisIndex, normalBasis, true);
+            roundMatrixElements(cleanMatrix);
+            block.matrix.copy(cleanMatrix);
+        }
+
+        // *** FIXED Stretch Pattern 1 ***
+        function applyStretchPattern1(dragInfo) {
+            const { face, currentMouse, lastMouse } = dragInfo;
+            if (!face) return;
+
+            const deltaY = (currentMouse.y - lastMouse.y) * STRETCH_INCREMENT_SCALE; // Use screen delta Y
+            // Use original sensitivity constant? Or the new scale? Let's use the new scale.
+            const dragAmount = deltaY;
+
+            const currentMatrix = block.matrix.clone(); // Apply incrementally
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+            const basisVector = getBasisVector(currentMatrix, normalAxisIndex);
+            const currentLength = basisVector.length();
+            const newLength = Math.max(0.1, currentLength + dragAmount);
+
+            if (Math.abs(newLength - currentLength) > 1e-4) {
+                basisVector.normalize().multiplyScalar(newLength);
+                 // Apply rounding based on original pattern intention?
+                setBasisVector(currentMatrix, normalAxisIndex, basisVector, true); // Rounding applied
+                roundMatrixElements(currentMatrix); // Round other elements
+                block.matrix.copy(currentMatrix);
+            }
+        }
+
+        // Pattern 2: Fixed Plane + World Vec (No Sensitivity/Rounding)
+        function applyShearPattern2(dragInfo) {
+            const { face, startPoint, currentPoint } = dragInfo; // Uses currentPoint from fixed plane
+            if (!face) return;
+
+            const currentMatrix = block.matrix.clone(); // Apply incrementally
+
+            // Need total drag from start on the fixed plane
+            const dragVectorWorld = currentPoint.clone().sub(startPoint);
+
+            const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+            const shearVectorWorld = dragVectorWorld.clone().sub(normalComponent);
+
+            // Apply shear based on total world shear vector from start (restarting from initial matrix)
+            const cleanMatrix = dragInfo.initialBlockMatrix.clone();
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, cleanMatrix);
+            const normalBasis = getBasisVector(cleanMatrix, normalAxisIndex);
+
+            normalBasis.add(shearVectorWorld); // Simplified add (may distort)
+
+            setBasisVector(cleanMatrix, normalAxisIndex, normalBasis, false); // No rounding
+            block.matrix.copy(cleanMatrix);
+        }
+
+        // *** FIXED Stretch Pattern 2 ***
+        function applyStretchPattern2(dragInfo) {
+            const { face, currentMouse, lastMouse } = dragInfo;
+            if (!face) return;
+
+            const deltaY = (currentMouse.y - lastMouse.y) * STRETCH_INCREMENT_SCALE;
+            const dragAmount = deltaY;
+
+            const currentMatrix = block.matrix.clone(); // Apply incrementally
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+            const basisVector = getBasisVector(currentMatrix, normalAxisIndex);
+            const currentLength = basisVector.length();
+            const newLength = Math.max(0.1, currentLength + dragAmount);
+
+            if (Math.abs(newLength - currentLength) > 1e-4) {
+                basisVector.normalize().multiplyScalar(newLength);
+                setBasisVector(currentMatrix, normalAxisIndex, basisVector, false); // No rounding
+                block.matrix.copy(currentMatrix);
+            }
+        }
+
+        // Pattern 3: Camera Parallel Plane (Shear)
+        function applyShearPattern3(dragInfo) {
+            const { face, startPoint, currentMouse, lastMouse } = dragInfo;
+            if (!face) return;
+
+            const intersectionNow = intersectCameraParallelPlane(currentMouse, startPoint, new THREE.Vector3());
+            const intersectionLast = intersectCameraParallelPlane(lastMouse, startPoint, new THREE.Vector3());
+
+            if (intersectionNow && intersectionLast) {
+                const dragVectorWorld = intersectionNow.clone().sub(intersectionLast);
+                const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+                const shearVectorWorld = dragVectorWorld.clone().sub(normalComponent);
+
+                const currentMatrix = block.matrix.clone();
+                const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+                const normalBasis = getBasisVector(currentMatrix, normalAxisIndex);
+                normalBasis.add(shearVectorWorld); // Simplified add
+                setBasisVector(currentMatrix, normalAxisIndex, normalBasis, false);
+                block.matrix.copy(currentMatrix);
+            }
+        }
+
+        // *** FIXED Stretch Pattern 4 *** (Renamed option label for clarity)
+        function applyStretchPattern4(dragInfo) {
+             const { face, currentMouse, lastMouse } = dragInfo;
+             if (!face) return;
+
+             // Use vertical mouse movement to control stretch amount along normal
+             const deltaY = (currentMouse.y - lastMouse.y) * STRETCH_INCREMENT_SCALE;
+             const dragAmount = deltaY;
+
+             const currentMatrix = block.matrix.clone(); // Apply incrementally
+             const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+             const basisVector = getBasisVector(currentMatrix, normalAxisIndex);
+             const currentLength = basisVector.length();
+             const newLength = Math.max(0.1, currentLength + dragAmount);
+
+             if (Math.abs(newLength - currentLength) > 1e-4) {
+                 basisVector.normalize().multiplyScalar(newLength);
+                 setBasisVector(currentMatrix, normalAxisIndex, basisVector, false);
+                 block.matrix.copy(currentMatrix);
+             }
+         }
+
+        // Pattern 5: Direct Mapping (Shear - Simplified)
+        function applyShearPattern5(dragInfo) {
+            const { face, startPoint, currentMouse } = dragInfo;
+            if (!face) return;
+
+            // Target plane is parallel to face, passing through start point
+            const targetPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(face.normal, startPoint);
+            const targetPoint = intersectPlane(currentMouse, targetPlane, new THREE.Vector3());
+
+            if (targetPoint) {
+                // Total drag vector on the target plane from the start
+                const dragVectorWorld = targetPoint.clone().sub(startPoint);
+                const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+                const shearVectorWorld = dragVectorWorld.clone().sub(normalComponent);
+
+                // Apply based on initial matrix + total shear
+                const cleanMatrix = dragInfo.initialBlockMatrix.clone();
+                const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, cleanMatrix);
+                const normalBasis = getBasisVector(cleanMatrix, normalAxisIndex);
+                normalBasis.add(shearVectorWorld); // Simplified add
+                setBasisVector(cleanMatrix, normalAxisIndex, normalBasis, false);
+                block.matrix.copy(cleanMatrix);
+            }
+        }
+
+        // *** FIXED Stretch Pattern 6 *** (Renamed option label for clarity)
+        function applyStretchPattern6(dragInfo) {
+             const { face, currentMouse, lastMouse } = dragInfo;
+             if (!face) return;
+
+             // Use vertical mouse movement to control stretch amount along normal
+             const deltaY = (currentMouse.y - lastMouse.y) * STRETCH_INCREMENT_SCALE;
+             const dragAmount = deltaY;
+
+             const currentMatrix = block.matrix.clone(); // Apply incrementally
+             const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+             const basisVector = getBasisVector(currentMatrix, normalAxisIndex);
+             const currentLength = basisVector.length();
+             const newLength = Math.max(0.1, currentLength + dragAmount);
+
+             if (Math.abs(newLength - currentLength) > 1e-4) {
+                 basisVector.normalize().multiplyScalar(newLength);
+                 setBasisVector(currentMatrix, normalAxisIndex, basisVector, false);
+                 block.matrix.copy(currentMatrix);
+             }
+         }
+
+        // Pattern 7: Screen Space Movement Mapping
+        function applyShearPattern7(dragInfo) {
+            const { face, currentMouse, lastMouse } = dragInfo;
+            if (!face) return;
+
+            const deltaX = (currentMouse.x - lastMouse.x) * 2;
+            const deltaY = (currentMouse.y - lastMouse.y) * 2;
+
+            const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+
+            const moveRight = cameraRight.clone().multiplyScalar(deltaX);
+            const moveUp = cameraUp.clone().multiplyScalar(deltaY);
+            const dragVectorWorld = moveRight.add(moveUp);
+
+            const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+            const shearVectorWorld = dragVectorWorld.clone().sub(normalComponent);
+
+            const currentMatrix = block.matrix.clone();
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+            const normalBasis = getBasisVector(currentMatrix, normalAxisIndex);
+            normalBasis.add(shearVectorWorld);
+            setBasisVector(currentMatrix, normalAxisIndex, normalBasis, false);
+            block.matrix.copy(currentMatrix);
+        }
+
+        function applyStretchPattern7(dragInfo) {
+            const { face, currentMouse, lastMouse } = dragInfo;
+            if (!face) return;
+
+            const deltaY = (currentMouse.y - lastMouse.y) * STRETCH_INCREMENT_SCALE * 2; // Slightly more sensitive here
+            const dragAmount = deltaY;
+
+            const currentMatrix = block.matrix.clone();
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+            const basisVector = getBasisVector(currentMatrix, normalAxisIndex);
+            const currentLength = basisVector.length();
+            const newLength = Math.max(0.1, currentLength + dragAmount);
+
+            if (Math.abs(newLength - currentLength) > 1e-4) {
+                basisVector.normalize().multiplyScalar(newLength);
+                setBasisVector(currentMatrix, normalAxisIndex, basisVector, false);
+                block.matrix.copy(currentMatrix);
+            }
+        }
+
+        // Pattern 8: Incremental Screen Delta
+         function applyShearPattern8(dragInfo) {
+            const { face, currentMouse, lastMouse } = dragInfo;
+             if (!face) return;
+
+             const deltaX = (currentMouse.x - lastMouse.x) * 0.1;
+             const deltaY = (currentMouse.y - lastMouse.y) * 0.1;
+
+             const currentMatrix = block.matrix.clone();
+             const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+             const otherAxes = [0, 1, 2].filter(i => i !== normalAxisIndex);
+
+             const normalBasis = getBasisVector(currentMatrix, normalAxisIndex);
+             const basis1 = getBasisVector(currentMatrix, otherAxes[0]);
+             const basis2 = getBasisVector(currentMatrix, otherAxes[1]);
+
+             normalBasis.addScaledVector(basis1, deltaX);
+             normalBasis.addScaledVector(basis2, deltaY);
+
+             setBasisVector(currentMatrix, normalAxisIndex, normalBasis, false);
+             block.matrix.copy(currentMatrix);
+         }
+
+         function applyStretchPattern8(dragInfo) {
+            const { face, currentMouse, lastMouse } = dragInfo;
+             if (!face) return;
+
+             const deltaY = (currentMouse.y - lastMouse.y) * 0.2;
+             const dragAmount = deltaY;
+
+             const currentMatrix = block.matrix.clone();
+             const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, currentMatrix);
+             const basisVector = getBasisVector(currentMatrix, normalAxisIndex);
+             const currentLength = basisVector.length();
+             const newLength = Math.max(0.1, currentLength + dragAmount);
+
+             if (Math.abs(newLength - currentLength) > 1e-4) {
+                 basisVector.normalize().multiplyScalar(newLength);
+                 setBasisVector(currentMatrix, normalAxisIndex, basisVector, false);
+                 block.matrix.copy(currentMatrix);
+             }
+         }
+
+        const patternFunctions = [
+            { shear: applyShearPattern1, stretch: applyStretchPattern1 }, // Pattern 1 (Stretch Fixed)
+            { shear: applyShearPattern2, stretch: applyStretchPattern2 }, // Pattern 2 (Stretch Fixed)
+            { shear: applyShearPattern3, stretch: applyStretchPattern4 }, // Pattern 3/4 (Shear P3, Stretch P4(Fixed))
+            { shear: applyShearPattern3, stretch: applyStretchPattern4 }, // Pattern 3/4 (Duplicate for list index)
+            { shear: applyShearPattern5, stretch: applyStretchPattern6 }, // Pattern 5/6 (Shear P5, Stretch P6(Fixed))
+            { shear: applyShearPattern5, stretch: applyStretchPattern6 }, // Pattern 5/6 (Duplicate for list index)
+            { shear: applyShearPattern7, stretch: applyStretchPattern7 }, // Pattern 7
+            { shear: applyShearPattern8, stretch: applyStretchPattern8 }, // Pattern 8
+        ];
+
+        // --- Event Handlers ---
+        function updateMouseCoords(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+
+        function onPointerDown(event) {
+            if (event.button !== 0) return;
+
+            updateMouseCoords(event);
+            const faceInfo = getIntersectedFace(mouse);
+
+            if (faceInfo) {
+                dragState.isDragging = true;
+                dragState.mode = event.shiftKey ? 'stretch' : 'shear';
+                dragState.startPoint.copy(faceInfo.point);
+                dragState.currentPoint.copy(faceInfo.point);
+                dragState.startMouse.copy(mouse);
+                dragState.currentMouse.copy(mouse);
+                dragState.lastMouse.copy(mouse);
+                 // Store face normal relative to the block's state at drag start if needed, but world normal is often more useful
+                dragState.face = { normal: faceInfo.normal.clone(), materialIndex: faceInfo.materialIndex };
+                dragState.dragPlane.setFromNormalAndCoplanarPoint(faceInfo.normal, faceInfo.point); // For patterns using fixed plane
+                dragState.initialBlockMatrix = block.matrix.clone(); // Store matrix at drag start, useful for some patterns
+                controls.enabled = false;
+                document.body.style.cursor = 'grabbing';
+            }
+        }
+
+        function onPointerMove(event) {
+            updateMouseCoords(event);
+            if (!dragState.isDragging) return;
+
+            dragState.lastMouse.copy(dragState.currentMouse);
+            dragState.currentMouse.copy(mouse);
+
+            // Update currentPoint based on the fixed dragPlane for relevant patterns
+            // This is needed for patterns 1, 2, (maybe 5) even if stretch uses deltaY
+            intersectPlane(mouse, dragState.dragPlane, dragState.currentPoint);
+
+            const patternFuncs = patternFunctions[currentPatternIndex];
+            if (dragState.mode === 'shear' && patternFuncs.shear) {
+                 // Pass initial matrix too, as some patterns might need it
+                patternFuncs.shear({...dragState});
+            } else if (dragState.mode === 'stretch' && patternFuncs.stretch) {
+                patternFuncs.stretch({...dragState});
+            }
+        }
+
+        function onPointerUp(event) {
+            if (event.button !== 0) return;
+            if (dragState.isDragging) {
+                dragState.isDragging = false;
+                dragState.mode = null;
+                dragState.face = null;
+                controls.enabled = true;
+                document.body.style.cursor = 'default';
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function resetBlockTransform() {
+             block.matrix.copy(initialMatrix);
+        }
+
+        // --- Init Function ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xdddddd);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(1.5, 1.5, 2.5);
+
+            const canvas = document.querySelector('#c');
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.screenSpacePanning = false;
+             controls.mouseButtons = {
+                 LEFT: null, // Disable left click rotate for OrbitControls
+                 MIDDLE: THREE.MOUSE.PAN,
+                 RIGHT: THREE.MOUSE.ROTATE
+             };
+             controls.enablePan = true;
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+            scene.add(gridHelper);
+            const axesHelper = new THREE.AxesHelper(1);
+            scene.add(axesHelper);
+
+            const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+             const materials = [
+                 new THREE.MeshStandardMaterial({color: 0xff0000, name: '+X'}),
+                 new THREE.MeshStandardMaterial({color: 0x990000, name: '-X'}),
+                 new THREE.MeshStandardMaterial({color: 0x00ff00, name: '+Y'}),
+                 new THREE.MeshStandardMaterial({color: 0x009900, name: '-Y'}),
+                 new THREE.MeshStandardMaterial({color: 0x0000ff, name: '+Z'}),
+                 new THREE.MeshStandardMaterial({color: 0x000099, name: '-Z'})
+             ];
+            block = new THREE.Mesh(geometry, materials);
+            block.matrixAutoUpdate = false;
+            initialMatrix = block.matrix.clone();
+            scene.add(block);
+
+            // Update option labels for fixed patterns
+            patternSelect.options[3].text = "4: Screen Delta Y Map (Stretch - Fixed)"; // Index 3 is value 3
+            patternSelect.options[5].text = "6: Screen Delta Y Map (Stretch - Fixed)"; // Index 5 is value 5
+
+            patternSelect.addEventListener('change', (event) => {
+                currentPatternIndex = parseInt(event.target.value, 10);
+                resetBlockTransform();
+            });
+            resetButton.addEventListener('click', resetBlockTransform);
+
+            renderer.domElement.addEventListener('pointerdown', onPointerDown);
+            renderer.domElement.addEventListener('pointermove', onPointerMove);
+            renderer.domElement.addEventListener('pointerup', onPointerUp);
+            renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+            window.addEventListener('resize', onWindowResize);
+
+            patternSelect.value = currentPatternIndex.toString();
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            // Update OrbitControls only if not dragging block
+            if (controls.enabled) {
+                controls.update(delta);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Start ---
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

@@ -1,24 +1,33 @@
 // src/controllers/InputHandler.js
 import * as THREE from 'three';
 import { getPreviewPosition, getPreviewOrientationMatrix, updatePreviewBlock, rotatePreview, flipPreview, setPreviewVisible } from './PreviewController.js';
-import { addBlock, removeBlock, getAllMeshes } from '../models/BlockDataManager.js'; // DataManager利用
+import { addBlock, removeBlock, getAllMeshes, updateBlockTransform } from '../models/BlockDataManager.js'; // DataManager利用
 import { setDeleteMode, isDeleteModeActive, setXmlEditMode, isXmlEditModeActive, setSelectedBlockId, getSelectedBlockId } from '../app/AppState.js';
 import { raycastFromMouse } from '../services/RaycastService.js'; // Raycastサービス利用
 import { X_AXIS, Y_AXIS, Z_AXIS, ROTATION_ANGLE } from '../app/Constants.js';
-import { selectBlockByRaycast, highlightHoveredFace, clearFaceHighlight } from './SelectionController.js'; // 面ハイライト関連追加
-import { handleRotationInput as handleBlockRotation, stretchBlock, shearBlock } from './BlockTransformController.js'; // stretch/shear追加
+import { selectBlockByRaycast, highlightHoveredFace, clearFaceHighlight, setGhostVisible, updateGhostMesh } from './SelectionController.js'; // 面ハイライト関連追加
+import { handleRotationInput as handleBlockRotation, stretchBlock, shearBlock, calculateStretch, calculateShear } from './BlockTransformController.js'; // stretch/shear追加
+
 
 let isMouseOverCanvas = false;
 const mouse = new THREE.Vector2(); // Raycasting用マウス座標
 
 const dragState = {
     isDragging: false,
-    startCoords: new THREE.Vector2(),
-    targetBlockId: null,
-    targetFaceNormal: new THREE.Vector3(),
-    targetPoint: new THREE.Vector3(), // ドラッグ開始点のワールド座標
-    isCtrlPressed: false,
+    mode: null, // 'shear' or 'stretch'
+    startPoint: new THREE.Vector3(),
+    startMouse: new THREE.Vector2(),
+    currentMouse: new THREE.Vector2(), // ★ 追加: 現在のマウスNDC
+    lastMouse: new THREE.Vector2(),    // ★ 追加: 1フレーム前のマウスNDC
+    face: null, // { normal, axisInfo, center, materialIndex }
+    dragPlaneCameraNormal: new THREE.Plane(), // せん断用
+    dragStartPointOnPlane: new THREE.Vector3(), // せん断用
+    initialBlockMatrix: new THREE.Matrix4(), // ドラッグ開始時の行列
+    targetBlockId: null, // ★ 追加: ドラッグ対象ID
 };
+const dragPlane = new THREE.Plane(); // ストレッチ用平面
+const currentIntersection = new THREE.Vector3(); // 計算用
+const dragVectorWorld = new THREE.Vector3(); // 計算用
 
 /**
  * InputHandlerを初期化し、イベントリスナーを設定します。
@@ -43,37 +52,56 @@ function onMouseMove(event) {
     const clientY = event.clientY;
     mouse.x = (clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+    dragState.lastMouse.copy(dragState.currentMouse); // ★ 前回座標を更新
+    dragState.currentMouse.copy(mouse);           // ★ 現在座標を更新
 
-    // ★ XML編集モードでなければ面ハイライトは行わない
     if (isXmlEditModeActive() && getSelectedBlockId() && !dragState.isDragging) {
-        highlightHoveredFace(mouse); // カーソル下の面をハイライト
+        highlightHoveredFace(mouse);
     } else {
-        clearFaceHighlight(); // ドラッグ中やモード外は消す
+        clearFaceHighlight();
     }
 }
 
 function onPointerDown(event) {
     if (event.button !== 0) return; // 左クリックのみ
     dragState.startCoords.copy(mouse); // ドラッグ開始座標記録
-    dragState.isCtrlPressed = event.ctrlKey; // Ctrlキー状態記録
+    const isShiftPressed = event.shiftKey;
 
     if (isDeleteModeActive()) {
         handleDeleteClick();
-    } else if (isXmlEditModeActive()) {
-        // XML編集モード: 面ドラッグ開始 or 選択/解除
-        const intersectInfo = highlightHoveredFace(mouse); // ハイライトしつつ情報を取得
+    }  else if (isXmlEditModeActive()) {
+        const intersectInfo = highlightHoveredFace(mouse); // ハイライト & 面情報取得
         if (intersectInfo && intersectInfo.object.userData.blockId === getSelectedBlockId()) {
-            // 選択中のブロックのハイライトされた面をクリックした場合 -> ドラッグ開始
             dragState.isDragging = true;
+            dragState.mode = isShiftPressed ? 'stretch' : 'shear'; // ★ モード設定
             dragState.targetBlockId = getSelectedBlockId();
-            dragState.targetFaceNormal.copy(intersectInfo.faceNormal);
-            dragState.targetPoint.copy(intersectInfo.point);
-            // カーソル変更などドラッグ中の見た目変更
+            dragState.face = intersectInfo; // 面情報を保持
+            dragState.startPoint.copy(intersectInfo.point);
+            dragState.currentMouse.copy(mouse); // 現在座標を初期化
+            dragState.lastMouse.copy(mouse);    // 前回座標も初期化
+
+            const selectedMesh = getMeshById(dragState.targetBlockId);
+            if (!selectedMesh) { dragState.isDragging = false; return; } // 安全策
+            dragState.initialBlockMatrix.copy(selectedMesh.matrix); // ★ 開始時行列を保存
+
+            // せん断モード用の平面設定 (サンプル同様)
+            if (dragState.mode === 'shear') {
+                const camera = InputHandler_getCamera(); // App.jsからカメラ取得(仮)
+                if (!camera) { dragState.isDragging = false; return; }
+                const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                dragState.dragPlaneCameraNormal.setFromNormalAndCoplanarPoint(cameraForward, intersectInfo.center);
+                intersectPlaneFromMouse(mouse, dragState.dragPlaneCameraNormal, dragState.dragStartPointOnPlane);
+            }
+            // ストレッチモード用の平面設定 (面に垂直)
+            if (dragState.mode === 'stretch') {
+                 dragPlane.setFromNormalAndCoplanarPoint(dragState.face.normal, dragState.startPoint);
+            }
+
+            setGhostVisible(true); // ★ ゴースト表示開始
             document.body.style.cursor = 'grabbing';
-            clearFaceHighlight(); // ドラッグ開始したら面ハイライトは消す
+            clearFaceHighlight();
         } else {
-            // 面以外をクリック or 別のブロックをクリック -> 選択/解除
-            selectBlockByRaycast(mouse);
+            selectBlockByRaycast(mouse); // 選択/解除
         }
     } else {
         handleNormalModeClick(); // 通常モード処理
@@ -104,44 +132,68 @@ function handleDeleteClick() {
     }
 }
 
-// ★追加: ドラッグ中の処理
 function onPointerMove(event) {
     if (!dragState.isDragging || !dragState.targetBlockId) return;
 
-    const currentMouse = new THREE.Vector2(
-        (event.clientX / window.innerWidth) * 2 - 1,
-        -(event.clientY / window.innerHeight) * 2 + 1
-    );
-    // TODO: マウス移動量から適切な dragAmount や dragVector を計算
-    // この計算は複雑になるため、別途関数化推奨
-    const dragDelta = currentMouse.clone().sub(dragState.startCoords);
+    // ★ マウス座標は onMouseMove で更新済みなので currentMouse を使う
+    const currentMouseNDC = dragState.currentMouse;
+    const selectedMesh = getMeshById(dragState.targetBlockId);
+    if (!selectedMesh) return; // 安全策
 
-    if (dragState.isCtrlPressed) { // Ctrl+ドラッグ = Stretch
-        // マウスの上下移動量(deltaY)を dragAmount に変換 (感度調整必要)
-        const dragAmount = -dragDelta.y * 0.5; // Y下向きが正なので反転、係数は調整
-        stretchBlock(dragState.targetBlockId, dragState.targetFaceNormal, dragAmount);
-    } else { // 通常ドラッグ = Shear
-        // ★マウス移動ベクトルをワールド平面に投影し、ローカル座標でのずれベクトルを計算する
-        // この部分はRaycastや投影計算が必要で複雑
-        // 仮実装: マウス移動量をそのまま使う（不正確）
-        const dragVectorWorld = new THREE.Vector3(dragDelta.x, 0, -dragDelta.y).multiplyScalar(0.5); // 仮
-        shearBlock(dragState.targetBlockId, dragState.targetFaceNormal, dragVectorWorld);
+    let transformResult = null;
+
+    if (dragState.mode === 'stretch') {
+        // ★ 修正: Raycastベースの押し引き量計算
+        if (intersectPlaneFromMouse(currentMouseNDC, dragPlane, currentIntersection)) {
+             dragVectorWorld.copy(currentIntersection).sub(dragState.targetPoint);
+             const dragAmount = dragVectorWorld.dot(dragState.face.normal);
+             transformResult = calculateStretch(dragState.targetBlockId, dragState.initialBlockMatrix, dragState.face.normal, dragAmount);
+             // ★ ドラッグ開始点を更新しない (開始点からの総移動量で計算)
+        }
+    } else if (dragState.mode === 'shear') {
+        // ★ 修正: サンプルのせん断ロジックを呼び出す
+        const camera = InputHandler_getCamera(); // 仮
+        if (!camera) return;
+        if (intersectPlaneFromMouse(currentMouseNDC, dragState.dragPlaneCameraNormal, currentIntersection)) {
+             dragVectorWorld.copy(currentIntersection).sub(dragState.dragStartPointOnPlane);
+             transformResult = calculateShear(dragState.targetBlockId, dragState.initialBlockMatrix, dragVectorWorld, dragState.face.axisInfo);
+             // ★ ドラッグ開始点を更新して連続的な操作にする
+             // dragState.dragStartPointOnPlane.copy(currentIntersection); // ← これだと挙動が違うかも？要検証
+        }
     }
 
-    // 次のフレームのために開始座標を更新する？ -> しない方が変化量が分かりやすい
-    // dragState.startCoords.copy(currentMouse);
+    if (transformResult) {
+        // ★ リアルタイム表示更新 (メッシュ直接操作)
+        selectedMesh.matrix.copy(transformResult.realtimeMatrix);
+        // ★ ゴースト表示更新 (整数化・クランプ後)
+        updateGhostMesh(transformResult.ghostMatrix);
+    }
 }
 
-// ★追加: ドラッグ終了処理
 function onPointerUp(event) {
-    if (event.button !== 0) return;
-    if (dragState.isDragging) {
-        dragState.isDragging = false;
-        dragState.targetBlockId = null;
-        document.body.style.cursor = 'default'; // カーソル戻す
-        console.log("Dragging ended.");
-        // 必要なら最終状態の確定処理など
+    if (event.button !== 0 || !dragState.isDragging) return;
+
+    // ★ ゴーストの最終状態を取得してデータ確定
+    const ghostMatrix = new THREE.Matrix4(); // 仮の行列
+    const ghostMesh = SelectionController_getGhostMesh(); // 仮の関数
+    if (ghostMesh) {
+         ghostMatrix.copy(ghostMesh.matrix);
+         // 分解して position と orientation を取得
+         const { position, orientation } = MatrixUtils_decomposeWorldMatrix(ghostMatrix); // 仮の関数
+         updateBlockTransform(dragState.targetBlockId, position, orientation); // DataManager更新
+         console.log("Block transform confirmed from ghost.");
+    } else {
+         console.warn("Ghost mesh not found on pointer up.");
+         // フォールバック: 最後のリアルタイム行列から確定？ or 何もしない？
     }
+
+
+    setGhostVisible(false); // ゴースト非表示
+    dragState.isDragging = false;
+    dragState.targetBlockId = null;
+    dragState.face = null;
+    document.body.style.cursor = 'default';
+    console.log("Dragging ended.");
 }
 
 function onKeyDown(event) {

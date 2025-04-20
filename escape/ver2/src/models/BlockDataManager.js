@@ -118,21 +118,22 @@ export function getMeshById(blockId) {
 
 // --- 内部ヘルパー ---
 function createMeshForBlock(blockData) {
-    const geometry = blockGeometry.clone(); // 固有のジオメトリ
-    const material = normalMaterial.clone(); // 固有のマテリアル (色変更のため)
-    material.side = THREE.DoubleSide;
+    const geometry = blockGeometry;
+    const materials = [];
+    for (let i = 0; i < 6; i++) {
+        // ★ 修正: BlockUtilsからインポートしたものをclone
+        materials.push(normalMaterial.clone());
+    }
 
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.blockId = blockData.id; // IDをメッシュにも保持
+    const mesh = new THREE.Mesh(geometry, materials);
+    mesh.userData.blockId = blockData.id;
     mesh.matrixAutoUpdate = false;
-    // ワールド行列を設定
     composeWorldMatrix(blockData.position, blockData.orientation, mesh.matrix);
-
     return mesh;
 }
 
 function disposeMeshResources(mesh) {
-    if (mesh.geometry) mesh.geometry.dispose();
+    // geometry は共有なので dispose しない
     if (mesh.material) {
         if (Array.isArray(mesh.material)) {
             mesh.material.forEach(m => m.dispose());
@@ -140,5 +141,5 @@ function disposeMeshResources(mesh) {
             mesh.material.dispose();
         }
     }
-    console.log(`Resources disposed for mesh: ${mesh.userData.blockId}`);
+    console.log(`Materials disposed for mesh: ${mesh.userData.blockId}`);
 }

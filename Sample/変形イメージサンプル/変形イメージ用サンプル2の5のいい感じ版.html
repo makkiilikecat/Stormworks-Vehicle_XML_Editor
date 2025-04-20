@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Shear/Stretch Editor with Ghost Preview</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #controls label { font-weight: bold; margin-bottom: 3px; }
+        #info { margin-top: 5px; font-size: 0.9em; }
+        button { padding: 5px; }
+        #matrixDisplay {
+            font-family: monospace;
+            font-size: 0.9em;
+            background-color: #eee;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <div id="controls">
+        <button id="resetButton">Reset Block</button>
+        <div>
+             <label for="matrixDisplay">Snapped Matrix (r):</label>
+             <div id="matrixDisplay">1,0,0,0,1,0,0,0,1</div>
+        </div>
+        <div id="info">
+            Left Drag: Shear<br>
+            Shift + Left Drag: Stretch<br>
+            Right Drag: Rotate View<br>
+            Middle Drag: Pan View<br>
+            Wheel: Zoom
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Constants ---
+        const BLOCK_SIZE = 1.0;
+        // Sensitivity scaling factor for screen movement to world stretch/shear amount
+        const SCREEN_MOVE_SENSITIVITY = 1.5; // Adjust this value to control sensitivity
+        const GHOST_OPACITY = 0.4;
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls;
+        let block, ghostBlock, initialMatrix;
+        const mouse = new THREE.Vector2();
+        const raycaster = new THREE.Raycaster();
+        const clock = new THREE.Clock();
+        const matrixDisplayElement = document.getElementById('matrixDisplay');
+
+        // Drag state
+        const dragState = {
+            isDragging: false,
+            mode: null,
+            startPoint: new THREE.Vector3(),
+            currentPoint: new THREE.Vector3(),
+            startMouse: new THREE.Vector2(),
+            currentMouse: new THREE.Vector2(),
+            lastMouse: new THREE.Vector2(),
+            face: null,
+            dragPlane: new THREE.Plane(),
+            initialBlockMatrix: new THREE.Matrix4(),
+        };
+
+        const resetButton = document.getElementById('resetButton');
+
+        // --- Matrix Utils ---
+        const _mat = new THREE.Matrix4();
+        const _vec = new THREE.Vector3();
+        const _vec2 = new THREE.Vector3(); // Additional temp vector
+        const _vec3 = new THREE.Vector3(); // Additional temp vector
+        const _quat = new THREE.Quaternion();
+
+        function getBasisVector(matrix, axisIndex, targetVector = new THREE.Vector3()) {
+            const te = matrix.elements;
+            const offset = axisIndex * 4;
+            return targetVector.set(te[offset + 0], te[offset + 1], te[offset + 2]);
+        }
+
+        function setBasisVector(matrix, axisIndex, vector) {
+            const te = matrix.elements;
+            const offset = axisIndex * 4;
+            te[offset + 0] = vector.x; te[offset + 1] = vector.y; te[offset + 2] = vector.z;
+            te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
+        }
+
+        function roundMatrixElements(matrix) {
+            const te = matrix.elements;
+            te[0] = Math.round(te[0]); te[1] = Math.round(te[1]); te[2] = Math.round(te[2]);
+            te[4] = Math.round(te[4]); te[5] = Math.round(te[5]); te[6] = Math.round(te[6]);
+            te[8] = Math.round(te[8]); te[9] = Math.round(te[9]); te[10] = Math.round(te[10]);
+            te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
+        }
+
+        function matrixToRotationString(matrix) {
+            const te = matrix.elements;
+            return [
+                Math.round(te[0]), Math.round(te[1]), Math.round(te[2]),
+                Math.round(te[4]), Math.round(te[5]), Math.round(te[6]),
+                Math.round(te[8]), Math.round(te[9]), Math.round(te[10])
+            ].join(',');
+        }
+
+        // --- Helper Functions ---
+        function getLocalAxisInfoFromWorldNormal(worldNormal, objectMatrix) {
+            const localNormal = worldNormal.clone();
+            objectMatrix.decompose(new THREE.Vector3(), _quat, new THREE.Vector3());
+            const invQuat = _quat.clone().invert();
+            localNormal.applyQuaternion(invQuat);
+            localNormal.normalize();
+
+            let maxDot = -1;
+            let axisIndex = 0;
+            let sign = 1;
+            for (let i = 0; i < 3; i++) {
+                _vec.set(0, 0, 0).setComponent(i, 1);
+                const dot = localNormal.dot(_vec);
+                const absDot = Math.abs(dot);
+                if (absDot > maxDot) {
+                    maxDot = absDot;
+                    axisIndex = i;
+                    sign = Math.sign(dot);
+                    if (sign === 0) sign = 1;
+                }
+            }
+            return { axisIndex, sign };
+        }
+
+        function getIntersectedFace(mouseCoords) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            const intersects = raycaster.intersectObject(block);
+            if (intersects.length > 0 && intersects[0].face) {
+                const intersection = intersects[0];
+                const worldNormal = intersection.face.normal.clone();
+                worldNormal.transformDirection(block.matrixWorld);
+                worldNormal.normalize();
+                const axisInfo = getLocalAxisInfoFromWorldNormal(worldNormal, block.matrix);
+                return {
+                    point: intersection.point,
+                    normal: worldNormal,
+                    materialIndex: intersection.face.materialIndex,
+                    axisInfo: axisInfo
+                };
+            }
+            return null;
+        }
+
+        function intersectPlane(mouseCoords, plane, target) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            return raycaster.ray.intersectPlane(plane, target);
+        }
+
+        // --- Transformation Logic ---
+        function applyShear(dragInfo) {
+            const { face, startPoint, currentMouse, initialBlockMatrix } = dragInfo;
+            if (!face || !face.axisInfo) return;
+
+            const targetPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(face.normal, startPoint);
+            const targetPoint = intersectPlane(currentMouse, targetPlane, new THREE.Vector3());
+
+            if (targetPoint) {
+                const dragVectorWorld = targetPoint.clone().sub(startPoint);
+                const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+                const shearVectorWorld = dragVectorWorld.clone().sub(normalComponent);
+
+                const matrixToUpdate = initialBlockMatrix.clone();
+                const normalAxisIndex = face.axisInfo.axisIndex;
+                const sign = face.axisInfo.sign;
+                const normalBasis = getBasisVector(matrixToUpdate, normalAxisIndex);
+
+                normalBasis.addScaledVector(shearVectorWorld, sign);
+                setBasisVector(matrixToUpdate, normalAxisIndex, normalBasis);
+
+                block.matrix.copy(matrixToUpdate);
+                roundMatrixElements(matrixToUpdate);
+                ghostBlock.matrix.copy(matrixToUpdate);
+            }
+        }
+
+        // *** REVISED Stretch Logic using Screen Movement Projection ***
+        function applyStretch(dragInfo) {
+             const { face, currentMouse, lastMouse } = dragInfo;
+             if (!face || !face.axisInfo) return;
+
+             const deltaX = currentMouse.x - lastMouse.x;
+             const deltaY = currentMouse.y - lastMouse.y;
+             const axisInfo = face.axisInfo;
+
+             // 1. Calculate screen move vector in world space
+             const cameraRight = _vec.set(1, 0, 0).applyQuaternion(camera.quaternion);
+             const cameraUp = _vec2.set(0, 1, 0).applyQuaternion(camera.quaternion);
+             const screenMoveVector = _vec3.set(0,0,0) // Use _vec3 here
+                  .addScaledVector(cameraRight, deltaX * SCREEN_MOVE_SENSITIVITY)
+                  .addScaledVector(cameraUp, deltaY * SCREEN_MOVE_SENSITIVITY);
+
+             // 2. Get the world direction of the local axis being stretched
+             const matrixToUpdate = block.matrix.clone(); // Operate on current matrix
+             const normalAxisIndex = axisInfo.axisIndex;
+             // Get the current basis vector (includes length)
+             const basisVector = getBasisVector(matrixToUpdate, normalAxisIndex, _vec); // Use _vec
+             // Get only the direction, normalized
+             const basisDirectionWorld = basisVector.clone().normalize();
+
+             // 3. Project screen move vector onto the basis direction
+             // This gives the amount of movement along the axis direction
+             const stretchAmount = screenMoveVector.dot(basisDirectionWorld);
+
+             // 4. Calculate new length and apply
+             const currentLength = basisVector.length();
+             // Add the calculated stretch amount (positive means moving along basisDirectionWorld)
+             const newLength = Math.max(0.1, currentLength + stretchAmount);
+
+             if (Math.abs(newLength - currentLength) > 1e-4) {
+                 // basisVector already has the correct direction, just set its length
+                 basisVector.setLength(newLength);
+                 setBasisVector(matrixToUpdate, normalAxisIndex, basisVector);
+
+                 block.matrix.copy(matrixToUpdate); // Update realtime block (no rounding)
+                 roundMatrixElements(matrixToUpdate); // Create rounded matrix for ghost
+                 ghostBlock.matrix.copy(matrixToUpdate);
+             }
+        }
+
+
+        // --- Event Handlers ---
+        // ... (onPointerDown, onPointerMove, onPointerUp, etc. remain the same) ...
+         function updateMouseCoords(event) {
+             const rect = renderer.domElement.getBoundingClientRect();
+             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+         }
+
+         function onPointerDown(event) {
+             if (event.button !== 0) return;
+             updateMouseCoords(event);
+             const faceInfo = getIntersectedFace(mouse);
+             if (faceInfo) {
+                 dragState.isDragging = true;
+                 dragState.mode = event.shiftKey ? 'stretch' : 'shear';
+                 dragState.startPoint.copy(faceInfo.point);
+                 dragState.currentPoint.copy(faceInfo.point);
+                 dragState.startMouse.copy(mouse);
+                 dragState.currentMouse.copy(mouse);
+                 dragState.lastMouse.copy(mouse);
+                 dragState.face = faceInfo;
+                 dragState.dragPlane.setFromNormalAndCoplanarPoint(faceInfo.normal, faceInfo.point);
+                 dragState.initialBlockMatrix.copy(block.matrix);
+                 ghostBlock.matrix.copy(block.matrix);
+                 roundMatrixElements(ghostBlock.matrix);
+                 ghostBlock.visible = true;
+                 controls.enabled = false;
+                 document.body.style.cursor = 'grabbing';
+                 updateMatrixDisplay();
+             }
+         }
+
+         function onPointerMove(event) {
+             updateMouseCoords(event);
+             if (!dragState.isDragging) return;
+             dragState.lastMouse.copy(dragState.currentMouse);
+             dragState.currentMouse.copy(mouse);
+             intersectPlane(mouse, dragState.dragPlane, dragState.currentPoint); // Still needed for shear? Maybe not if shear also uses screen move? Let's keep it for now.
+             if (dragState.mode === 'shear') {
+                 applyShear({...dragState});
+             } else if (dragState.mode === 'stretch') {
+                 applyStretch({...dragState});
+             }
+             updateMatrixDisplay();
+         }
+
+         function onPointerUp(event) {
+             if (event.button !== 0) return;
+             if (dragState.isDragging) {
+                  block.matrix.copy(ghostBlock.matrix);
+                  ghostBlock.visible = false;
+                  updateMatrixDisplay();
+                 dragState.isDragging = false;
+                 dragState.mode = null;
+                 dragState.face = null;
+                 controls.enabled = true;
+                 document.body.style.cursor = 'default';
+             }
+         }
+
+         function onWindowResize() {
+             camera.aspect = window.innerWidth / window.innerHeight;
+             camera.updateProjectionMatrix();
+             renderer.setSize(window.innerWidth, window.innerHeight);
+         }
+
+         function resetBlockTransform() {
+              block.matrix.copy(initialMatrix);
+              ghostBlock.visible = false;
+              updateMatrixDisplay();
+         }
+
+         function updateMatrixDisplay() {
+             const matrixSource = ghostBlock.visible ? ghostBlock.matrix : block.matrix;
+             if (matrixDisplayElement && matrixSource) {
+                 matrixDisplayElement.textContent = matrixToRotationString(matrixSource);
+             }
+         }
+
+
+        // --- Init Function ---
+        // ... (init function remains the same) ...
+         function init() {
+             scene = new THREE.Scene();
+             scene.background = new THREE.Color(0xdddddd);
+             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+             camera.position.set(1.5, 1.5, 2.5);
+             const canvas = document.querySelector('#c');
+             renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+             renderer.sortObjects = false;
+             renderer.setSize(window.innerWidth, window.innerHeight);
+             renderer.setPixelRatio(window.devicePixelRatio);
+             controls = new OrbitControls(camera, renderer.domElement);
+             controls.enableDamping = true;
+             controls.dampingFactor = 0.1;
+             controls.screenSpacePanning = false;
+             controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+             controls.enablePan = true;
+             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+             scene.add(ambientLight);
+             const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+             directionalLight.position.set(5, 10, 7);
+             scene.add(directionalLight);
+             const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+             scene.add(gridHelper);
+             const axesHelper = new THREE.AxesHelper(1);
+             scene.add(axesHelper);
+             const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+             const materials = [ /* Omitted for brevity - same as before */
+                  new THREE.MeshStandardMaterial({color: 0xff0000, name: '+X'}),
+                  new THREE.MeshStandardMaterial({color: 0x990000, name: '-X'}),
+                  new THREE.MeshStandardMaterial({color: 0x00ff00, name: '+Y'}),
+                  new THREE.MeshStandardMaterial({color: 0x009900, name: '-Y'}),
+                  new THREE.MeshStandardMaterial({color: 0x0000ff, name: '+Z'}),
+                  new THREE.MeshStandardMaterial({color: 0x000099, name: '-Z'})
+             ];
+             block = new THREE.Mesh(geometry, materials);
+             block.matrixAutoUpdate = false;
+             initialMatrix = block.matrix.clone();
+             scene.add(block);
+             const ghostMaterials = materials.map(m => { /* Omitted for brevity - same as before */
+                  const ghostMat = m.clone();
+                  ghostMat.opacity = GHOST_OPACITY;
+                  ghostMat.transparent = true;
+                  return ghostMat;
+              });
+             ghostBlock = new THREE.Mesh(geometry, ghostMaterials);
+             ghostBlock.matrixAutoUpdate = false;
+             ghostBlock.visible = false;
+             scene.add(ghostBlock);
+             resetButton.addEventListener('click', resetBlockTransform);
+             renderer.domElement.addEventListener('pointerdown', onPointerDown);
+             renderer.domElement.addEventListener('pointermove', onPointerMove);
+             renderer.domElement.addEventListener('pointerup', onPointerUp);
+             renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+             window.addEventListener('resize', onWindowResize);
+             updateMatrixDisplay();
+         }
+
+        // --- Animation Loop ---
+        // ... (animate function remains the same) ...
+        function animate() {
+             requestAnimationFrame(animate);
+             const delta = clock.getDelta();
+             if (controls.enabled) { controls.update(delta); }
+             renderer.render(scene, camera);
+         }
+
+        // --- Start ---
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

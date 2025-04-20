@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Shear/Stretch Pattern Tester (Grid Snap)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        #controls label { font-weight: bold; }
+        #info { margin-top: 5px; font-size: 0.9em; }
+        button { padding: 5px; }
+        #modeInfo { font-weight: bold; color: #007bff; margin-top: 5px;}
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <div id="controls">
+        <label>Operation Mode:</label>
+        <div id="modeInfo">Idle</div>
+        <button id="resetButton">Reset Block</button>
+        <div id="info">
+            Left Drag: Shear<br>
+            Shift + Left Drag: Stretch<br>
+            Right Drag: Rotate View<br>
+            Middle Drag: Pan View<br>
+            Wheel: Zoom
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Constants ---
+        const VISUAL_BLOCK_SIZE = 1.0; // 見た目上のブロックサイズ
+        const GRID_SIZE = 0.25; // グリッドスナップの間隔
+        const GRID_HELPER_SIZE = 20; // グリッド表示範囲
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls;
+        let block, initialMatrix;
+        const mouse = new THREE.Vector2();
+        const raycaster = new THREE.Raycaster();
+        const clock = new THREE.Clock();
+        const modeInfoDiv = document.getElementById('modeInfo');
+
+        // Drag state
+        const dragState = {
+            isDragging: false,
+            mode: null, // 'shear' or 'stretch'
+            startPoint: new THREE.Vector3(), // Intersection point in world space at drag start
+            face: null, // Intersected face { normal: Vector3 (world), materialIndex: number } at drag start
+            dragPlane: new THREE.Plane(), // Plane parallel to the face at startPoint
+            initialBlockMatrix: new THREE.Matrix4(), // Block matrix at drag start
+            invInitialBlockMatrix: new THREE.Matrix4(), // Inverse of initialBlockMatrix
+        };
+
+        // UI elements
+        const resetButton = document.getElementById('resetButton');
+
+        // --- Matrix Utils (Ported/Simplified) ---
+        const _mat = new THREE.Matrix4();
+        const _vec = new THREE.Vector3();
+        const _tmpVec1 = new THREE.Vector3(); // Temporary vectors
+        const _tmpVec2 = new THREE.Vector3();
+
+        function getBasisVector(matrix, axisIndex, targetVector = new THREE.Vector3()) {
+            return targetVector.setFromMatrixColumn(matrix, axisIndex); // Use setFromMatrixColumn
+        }
+
+        function setBasisVector(matrix, axisIndex, vector) {
+             // Make a copy before modifying elements directly
+             const elements = matrix.elements;
+             const offset = axisIndex * 4;
+             elements[offset] = vector.x;
+             elements[offset + 1] = vector.y;
+             elements[offset + 2] = vector.z;
+             // Ensure matrix.elements is updated if matrix is passed by reference elsewhere,
+             // though direct modification is usually fine if not shared unexpectedly.
+        }
+
+        // --- Helper Functions ---
+        function snapToGrid(vector, gridSize) {
+            vector.x = Math.round(vector.x / gridSize) * gridSize;
+            vector.y = Math.round(vector.y / gridSize) * gridSize;
+            vector.z = Math.round(vector.z / gridSize) * gridSize;
+            // Avoid -0 issues if gridSize is positive
+            if (gridSize > 0) {
+                if (Object.is(vector.x, -0)) vector.x = 0;
+                if (Object.is(vector.y, -0)) vector.y = 0;
+                if (Object.is(vector.z, -0)) vector.z = 0;
+            }
+            return vector; // Return for chaining if needed
+        }
+
+        function getIntersectedFace(mouseCoords) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            const intersects = raycaster.intersectObject(block);
+            if (intersects.length > 0 && intersects[0].face) {
+                const intersection = intersects[0];
+                const worldNormal = intersection.face.normal.clone();
+                worldNormal.transformDirection(block.matrixWorld).normalize();
+                return {
+                    point: intersection.point,
+                    normal: worldNormal,
+                    materialIndex: intersection.face.materialIndex
+                };
+            }
+            return null;
+        }
+
+        // Calculate intersection with a plane
+        function intersectPlane(mouseCoords, plane, target) {
+            raycaster.setFromCamera(mouseCoords, camera);
+            return raycaster.ray.intersectPlane(plane, target);
+        }
+
+        // Find the local axis index (0, 1, 2 for X, Y, Z) most aligned with a world normal
+        function getLocalAxisIndexFromWorldNormal(worldNormal, objectInverseMatrix) {
+            const localNormal = worldNormal.clone().transformDirection(objectInverseMatrix).normalize();
+            let maxDot = -1;
+            let axisIndex = 0;
+            for (let i = 0; i < 3; i++) {
+                _vec.set(0, 0, 0).setComponent(i, 1);
+                const dot = Math.abs(localNormal.dot(_vec));
+                if (dot > maxDot) {
+                    maxDot = dot;
+                    axisIndex = i;
+                }
+            }
+            return axisIndex;
+        }
+
+        // --- Grid Snap Pattern Implementation ---
+
+        function applyStretchWithGridSnap(currentMouse) {
+            const { face, startPoint, dragPlane, initialBlockMatrix, invInitialBlockMatrix } = dragState;
+            if (!face) return;
+
+            // 1. Find intersection point on the starting drag plane
+            const targetPoint = intersectPlane(currentMouse, dragPlane, _tmpVec1);
+            if (!targetPoint) return;
+
+            // 2. Snap the target point to the grid
+            const snappedTargetPoint = snapToGrid(targetPoint.clone(), GRID_SIZE); // Use clone
+
+            // 3. Calculate the distance along the normal from startPoint to snappedTargetPoint
+            const dragAmount = snappedTargetPoint.sub(startPoint).dot(face.normal);
+
+            // 4. Determine the local axis corresponding to the face normal
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, invInitialBlockMatrix);
+
+            // 5. Get the current basis vector and its length from the initial matrix
+            const currentMatrix = initialBlockMatrix.clone(); // Work from the initial state
+            const basisVector = getBasisVector(currentMatrix, normalAxisIndex, _tmpVec2);
+            const currentLength = basisVector.length();
+
+            // 6. Calculate the new length, snapped to grid units
+            let newLength = currentLength + dragAmount;
+            newLength = Math.max(GRID_SIZE, Math.round(newLength / GRID_SIZE) * GRID_SIZE); // Ensure minimum size is GRID_SIZE
+
+            // 7. Apply the new length if it has changed
+            if (Math.abs(newLength - currentLength) > 1e-4) { // Use a small tolerance
+                basisVector.normalize().multiplyScalar(newLength);
+                setBasisVector(currentMatrix, normalAxisIndex, basisVector);
+                block.matrix.copy(currentMatrix); // Update the block's matrix
+            }
+        }
+
+        function applyShearWithGridSnap(currentMouse) {
+            const { face, startPoint, dragPlane, initialBlockMatrix, invInitialBlockMatrix } = dragState;
+            if (!face) return;
+
+            // 1. Find intersection point on the starting drag plane
+            const targetPoint = intersectPlane(currentMouse, dragPlane, _tmpVec1);
+            if (!targetPoint) return;
+
+            // 2. Snap the target point to the grid
+            const snappedTargetPoint = snapToGrid(targetPoint.clone(), GRID_SIZE); // Use clone
+
+            // 3. Calculate the world drag vector from startPoint to snappedTargetPoint
+            const dragVectorWorld = snappedTargetPoint.sub(startPoint);
+
+            // 4. Calculate the shear component parallel to the face plane
+            const normalComponent = face.normal.clone().multiplyScalar(dragVectorWorld.dot(face.normal));
+            const shearVectorWorld = dragVectorWorld.sub(normalComponent); // World shear vector
+
+            // 5. Convert world shear vector to local shear vector
+            const shearVectorLocal = shearVectorWorld.clone().transformDirection(invInitialBlockMatrix);
+
+            // 6. Snap the local shear vector components to the grid size
+            //    (This means the shear amount will be a multiple of GRID_SIZE in local space)
+            snapToGrid(shearVectorLocal, GRID_SIZE);
+
+            // 7. Convert the snapped local shear vector back to world space (optional, but cleaner to apply in local)
+            //    Let's apply the snapped local shear directly to the initial matrix's basis vector.
+
+            // 8. Determine the local axis corresponding to the face normal
+            const normalAxisIndex = getLocalAxisIndexFromWorldNormal(face.normal, invInitialBlockMatrix);
+
+            // 9. Get the initial basis vectors
+            const currentMatrix = initialBlockMatrix.clone(); // Work from the initial state
+            const normalBasis = getBasisVector(currentMatrix, normalAxisIndex, _tmpVec2);
+            const otherAxes = [0, 1, 2].filter(i => i !== normalAxisIndex);
+            const basis1 = getBasisVector(currentMatrix, otherAxes[0]);
+            const basis2 = getBasisVector(currentMatrix, otherAxes[1]);
+
+            // 10. Reconstruct the world shear vector from the snapped local shear components
+            //     Requires knowing which local component corresponds to which basis vector...
+            //     Let's simplify: Add the snapped local shear vector scaled by the other basis vectors
+            //     to the normal basis vector. This is an approximation of pure shear.
+
+             const worldShearSnapped = _vec.set(0,0,0);
+             worldShearSnapped.addScaledVector(basis1, shearVectorLocal.getComponent(otherAxes[0]) / basis1.lengthSq() ); // Approximate projection? No, simpler:
+             worldShearSnapped.addScaledVector(basis1, shearVectorLocal.getComponent(otherAxes[0])); // Incorrect scaling but simple
+             worldShearSnapped.addScaledVector(basis2, shearVectorLocal.getComponent(otherAxes[1]));
+
+            // Check if shear is significant before applying
+            if (shearVectorLocal.lengthSq() > 1e-6) {
+                normalBasis.add(worldShearSnapped); // Add the calculated world shear
+                setBasisVector(currentMatrix, normalAxisIndex, normalBasis);
+                block.matrix.copy(currentMatrix); // Update the block's matrix
+            } else {
+                 // If snapped shear is zero, revert to initial state for this drag
+                 block.matrix.copy(initialBlockMatrix);
+            }
+        }
+
+
+        // --- Event Handlers ---
+        function updateMouseCoords(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+
+        function onPointerDown(event) {
+            if (event.button !== 0) return; // Only left click for transform
+
+            updateMouseCoords(event);
+            const faceInfo = getIntersectedFace(mouse);
+
+            if (faceInfo) {
+                dragState.isDragging = true;
+                dragState.mode = event.shiftKey ? 'stretch' : 'shear';
+                dragState.startPoint.copy(faceInfo.point);
+                dragState.face = { normal: faceInfo.normal.clone(), materialIndex: faceInfo.materialIndex };
+                dragState.dragPlane.setFromNormalAndCoplanarPoint(faceInfo.normal, faceInfo.point);
+                dragState.initialBlockMatrix.copy(block.matrix);
+                dragState.invInitialBlockMatrix.copy(block.matrix).invert(); // Store inverse matrix too
+                controls.enabled = false;
+                document.body.style.cursor = 'grabbing';
+                modeInfoDiv.textContent = `Mode: ${dragState.mode.toUpperCase()}`;
+            }
+        }
+
+        function onPointerMove(event) {
+            updateMouseCoords(event);
+            if (!dragState.isDragging) return;
+
+            if (dragState.mode === 'shear') {
+                applyShearWithGridSnap(mouse);
+            } else if (dragState.mode === 'stretch') {
+                applyStretchWithGridSnap(mouse);
+            }
+        }
+
+        function onPointerUp(event) {
+            if (event.button !== 0) return;
+            if (dragState.isDragging) {
+                dragState.isDragging = false;
+                dragState.mode = null;
+                dragState.face = null;
+                controls.enabled = true;
+                document.body.style.cursor = 'default';
+                modeInfoDiv.textContent = 'Idle';
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function resetBlockTransform() {
+             block.matrix.copy(initialMatrix);
+             if(dragState.isDragging) { // If resetting during drag, stop drag
+                 dragState.isDragging = false;
+                 dragState.mode = null;
+                 dragState.face = null;
+                 controls.enabled = true;
+                 document.body.style.cursor = 'default';
+                 modeInfoDiv.textContent = 'Idle';
+             }
+        }
+
+        // --- Init Function ---
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xdddddd);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(1.5, 1.5, 2.5);
+
+            // Renderer
+            const canvas = document.querySelector('#c');
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.screenSpacePanning = false;
+             controls.mouseButtons = {
+                 LEFT: THREE.MOUSE.ROTATE, // Disable left click rotate
+                 MIDDLE: THREE.MOUSE.PAN,
+                 RIGHT: THREE.MOUSE.ROTATE
+             };
+             controls.enablePan = true;
+
+
+            // Light
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            // Grid
+            const gridHelper = new THREE.GridHelper(
+                GRID_HELPER_SIZE,
+                GRID_HELPER_SIZE / GRID_SIZE, // Divisions match grid size
+                0x888888,
+                0xcccccc
+            );
+            scene.add(gridHelper);
+            const axesHelper = new THREE.AxesHelper(1);
+            scene.add(axesHelper);
+
+
+            // Block
+            const geometry = new THREE.BoxGeometry(VISUAL_BLOCK_SIZE, VISUAL_BLOCK_SIZE, VISUAL_BLOCK_SIZE);
+             const materials = [ // Keep face colors
+                 new THREE.MeshStandardMaterial({color: 0xff0000}), // +X
+                 new THREE.MeshStandardMaterial({color: 0x990000}), // -X
+                 new THREE.MeshStandardMaterial({color: 0x00ff00}), // +Y
+                 new THREE.MeshStandardMaterial({color: 0x009900}), // -Y
+                 new THREE.MeshStandardMaterial({color: 0x0000ff}), // +Z
+                 new THREE.MeshStandardMaterial({color: 0x000099})  // -Z
+             ];
+            block = new THREE.Mesh(geometry, materials);
+            block.matrixAutoUpdate = false;
+            // Set initial scale to match GRID_SIZE if VISUAL_BLOCK_SIZE is different? No, matrix handles scale.
+            initialMatrix = block.matrix.clone(); // Store initial identity matrix
+            scene.add(block);
+
+            // UI Listeners
+            resetButton.addEventListener('click', resetBlockTransform);
+
+            // Event Listeners
+            renderer.domElement.addEventListener('pointerdown', onPointerDown);
+            renderer.domElement.addEventListener('pointermove', onPointerMove);
+            renderer.domElement.addEventListener('pointerup', onPointerUp);
+            renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (controls.enabled) {
+                controls.update(delta);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Start ---
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

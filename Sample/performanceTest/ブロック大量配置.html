@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Performance Test (Many Cubes - Non-Optimized)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #222; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            background-color: rgba(0,0,0,0.5);
+            padding: 5px;
+            font-family: sans-serif;
+            z-index: 100;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+            color: white;
+            font-family: sans-serif;
+        }
+        label, select, button { margin: 5px; }
+        #fps { margin-left: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="info">Simple Cube Performance Test (Non-Optimized)</div>
+    <div id="controls">
+        <label for="cubeCount">Cube Count:</label>
+        <select id="cubeCount">
+            <option value="1000">1000</option>
+            <option value="5000">5000</option>
+            <option value="10000" selected>10000</option>
+            <option value="20000">20000</option>
+            <option value="30000">30000</option>
+        </select>
+        <button id="generateButton">Generate</button>
+        <span id="fps">FPS: -</span>
+    </div>
+
+    <script async src="https://unpkg.com/es-module-shims@1.8.3/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        // OrbitControls をインポートしてマウス操作を可能にする
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls;
+        let cubes = []; // 追加したキューブを管理する配列
+        let lastTime = 0;
+        let frameCount = 0;
+        const fpsElement = document.getElementById('fps');
+        const clock = new THREE.Clock(); // FPS計算用のClock
+
+        function init() {
+            // --- 基本設定 ---
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x282c34); // 少し落ち着いた背景色
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            // キューブの広がり具合に合わせてカメラの初期位置を調整
+            camera.position.set(0, 50, 100);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true }); // アンチエイリアス有効
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // --- カメラコントロール ---
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // 慣性を有効にする (滑らかな操作感)
+            controls.dampingFactor = 0.05;
+
+            // --- ライト ---
+            // 環境光: 全体を均一に照らす
+            const ambientLight = new THREE.AmbientLight(0x606060);
+            scene.add(ambientLight);
+            // 平行光: 特定の方向から照らし、影を作る
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            directionalLight.position.set(50, 80, 30); // 光の方向
+            scene.add(directionalLight);
+
+            // --- イベントリスナー ---
+            window.addEventListener('resize', onWindowResize, false);
+            document.getElementById('generateButton').addEventListener('click', regenerateCubes);
+
+            // --- 初期キューブ生成 ---
+            regenerateCubes();
+
+            // --- アニメーション開始 ---
+            animate();
+        }
+
+        // シーンから全てのキューブを削除する関数
+        function clearCubes() {
+            console.log(`Clearing ${cubes.length} cubes...`);
+            // 効率は良くないが、わかりやすさのため個別に削除
+            cubes.forEach(cube => {
+                scene.remove(cube);
+                // ジオメトリとマテリアルは共有しているので、ここでは dispose しない
+            });
+            cubes = []; // 配列を空にする
+        }
+
+        // 指定された数のキューブを作成してシーンに追加する関数
+        function createCubes(count) {
+            clearCubes(); // 既存のキューブを削除
+
+            console.log(`Generating ${count} cubes...`);
+            const startTime = performance.now();
+
+            // ジオメトリとマテリアルはループの外で定義 (これは基本的な効率化)
+            const geometry = new THREE.BoxGeometry(1, 1, 1); // 1x1x1 サイズの立方体
+            // 単色 (例: 青) の基本的なマテリアル
+            const material = new THREE.MeshStandardMaterial({
+                 color: 0x4488ff,
+                 roughness: 0.7, // 少しざらついた質感
+                 metalness: 0.1  // 少し金属感を出す
+            });
+
+            const range = 100; // キューブを配置する範囲 (-range/2 から +range/2)
+
+            // --- ここが非最適化のポイント ---
+            // ループ内で個別に Mesh を作成し、シーンに追加する
+            for (let i = 0; i < count; i++) {
+                const mesh = new THREE.Mesh(geometry, material);
+
+                // ランダムな位置を設定
+                mesh.position.x = (Math.random() - 0.5) * range;
+                mesh.position.y = (Math.random() - 0.5) * range;
+                mesh.position.z = (Math.random() - 0.5) * range;
+
+                // 回転やスケールは今回は加えない (シンプルにするため)
+
+                scene.add(mesh); // 個別にシーンに追加 (描画コールが増える原因)
+                cubes.push(mesh); // 管理用配列に追加
+            }
+            // --- 非最適化ポイントここまで ---
+
+            const endTime = performance.now();
+            console.log(`Generated ${count} cubes in ${((endTime - startTime) / 1000).toFixed(3)} seconds.`);
+
+            // 情報表示を更新
+            document.getElementById('info').innerText = `Simple Cube Performance Test (${count} cubes - Non-Optimized)`;
+        }
+
+        // UIから個数を取得してキューブを再生成する関数
+        function regenerateCubes() {
+            const count = parseInt(document.getElementById('cubeCount').value, 10);
+            if (isNaN(count) || count <= 0) {
+                console.error("Invalid cube count selected.");
+                return;
+            }
+            createCubes(count);
+        }
+
+        // ウィンドウリサイズ時の処理
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // アニメーションループ
+        function animate() {
+            requestAnimationFrame(animate); // 次のフレームを要求
+
+            const deltaTime = clock.getDelta(); // 前回フレームからの経過時間
+
+            controls.update(); // カメラコントロールを更新 (Damping有効時必須)
+
+            // FPS 計算と表示 (1秒ごとに更新)
+            frameCount++;
+            const elapsedTime = clock.getElapsedTime();
+            if (elapsedTime - lastTime >= 1.0) {
+                const currentFps = Math.round(frameCount / (elapsedTime - lastTime));
+                fpsElement.textContent = `FPS: ${currentFps}`;
+                lastTime = elapsedTime;
+                frameCount = 0;
+            }
+
+            renderer.render(scene, camera); // シーンを描画
+        }
+
+        // --- 初期化実行 ---
+        init();
+    </script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 // src/models/MatrixUtils.js
 import * as THREE from 'three';
+import { MIN_THICKNESS } from '../app/Constants.js'; // ★ MIN_THICKNESS をインポート
 
 const translation = new THREE.Matrix4();
 const _vec = new THREE.Vector3();
@@ -95,12 +96,34 @@ export function setBasisVector(matrix, axisIndex, vector) {
 }
 
 /**
- * ★ 新規: 行列の回転・スケール部分(左上3x3)の要素をすべて整数に丸めます。
+ * ★ 修正: 行列の回転・スケール・せん断部分の要素を整数に丸め、
+ * さらに各基底ベクトルの長さが MIN_THICKNESS 未満にならないようにクランプします。
+ * (サンプルからの移植・統合)
  * @param {THREE.Matrix4} matrix - 対象の行列 (変更されます)
  */
 export function roundMatrixElements(matrix) {
     const te = matrix.elements;
+
+    // 1. 要素を整数に丸める
     te[0] = Math.round(te[0]); te[1] = Math.round(te[1]); te[2] = Math.round(te[2]);
     te[4] = Math.round(te[4]); te[5] = Math.round(te[5]); te[6] = Math.round(te[6]);
     te[8] = Math.round(te[8]); te[9] = Math.round(te[9]); te[10] = Math.round(te[10]);
+    te[3] = 0; te[7] = 0; te[11] = 0; // アフィン変換維持 (位置部分は変えない)
+
+    // 2. 丸めた後、各基底ベクトルの長さをチェックし、必要なら MIN_THICKNESS にクランプ
+    for (let i = 0; i < 3; i++) {
+        const basis = getBasisVector(matrix, i, _vec);
+        const lengthSq = basis.lengthSq();
+
+        if (lengthSq < MIN_THICKNESS * MIN_THICKNESS) {
+            if (lengthSq > 1e-9) { // ほぼゼロでなければ方向を維持
+                basis.setLength(MIN_THICKNESS);
+            } else { // ゼロベクトルになった場合
+                basis.set(0,0,0).setComponent(i, MIN_THICKNESS); // 軸方向に最小厚み
+            }
+            setBasisVector(matrix, i, basis); // クランプしたベクトルを書き戻す(整数とは限らない)
+        }
+    }
+    // 再度整数化するかは要検討 (Stormworksが最終的に整数のみなら必要？)
+    // → 整数化を setBasisVector に任せる現状維持
 }
