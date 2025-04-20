@@ -3,11 +3,43 @@ body {
     margin: 0; /* ブラウザデフォルトのマージンを削除 */
     overflow: hidden; /* スクロールバーを非表示 */
     background-color: #333; /* 背景色を暗めに設定 */
+    font-family: sans-serif; /* 基本フォント設定 */
+    color: #eee; /* 基本文字色 */
 }
 
 /* Canvas要素をウィンドウ全体に表示 */
 #workbench-canvas {
+    position: fixed; /* UI要素の下に配置 */
+    top: 0;
+    left: 0;
     display: block; /* インライン要素の隙間を削除 */
     width: 100vw; /* ビューポート幅全体 */
     height: 100vh; /* ビューポート高さ全体 */
+    z-index: -1; /* UIより後ろに */
+}
+
+/* ファイル読み込みUIのスタイル */
+#file-controls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center; /* 要素を縦中央揃え */
+    gap: 10px; /* 要素間のスペース */
+}
+
+#file-controls label {
+    font-weight: bold;
+}
+
+#file-controls button {
+    padding: 5px 10px;
+}
+
+#load-status {
+    font-size: 0.9em;
+    margin-left: 10px;
 }

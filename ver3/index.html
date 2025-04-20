@@ -3,10 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stormworks XML Editor (Stage 1.1)</title>
+    <title>Stormworks XML Editor (Stage 1.2)</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <div id="file-controls">
+        <label for="fileInput">ビークルXML:</label>
+        <input type="file" id="fileInput" accept=".xml">
+        <button id="loadButton">読み込み</button>
+        <span id="load-status"></span> </div>
+
     <canvas id="workbench-canvas"></canvas>
 
     <script type="importmap">

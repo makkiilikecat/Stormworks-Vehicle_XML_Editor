@@ -10,34 +10,36 @@ export function setupSceneEnvironment() {
     scene.background = new THREE.Color(0x3d434f); // Stormworksのワークベンチに近い背景色
 
     // カメラを作成 (PerspectiveCamera)
-    // -視野角(fov), アスペクト比(aspect), 近クリップ面(near), 遠クリップ面(far)
     const camera = new THREE.PerspectiveCamera(
-        75, // 視野角を広めに
-        window.innerWidth / window.innerHeight, // アスペクト比はウィンドウサイズに合わせる
-        0.1, // 近いオブジェクトの描画開始距離
-        1000 // 遠いオブジェクトの描画終了距離
+        75, // 視野角
+        window.innerWidth / window.innerHeight, // アスペクト比
+        0.1, // Near clip
+        1000 // Far clip
     );
-    // 初期カメラ位置を設定 (少し上から斜めに見る感じ)
-    camera.position.set(10, 15, 20);
-    camera.lookAt(0, 0, 0); // 原点を見つめる
+    // --- 修正点: カメラの初期位置を調整 ---
+    // 原点の「左(-X)」「上(+Y)」「前(-Z)」から見る位置に設定
+    camera.position.set(-15, 12, -18); // X:左, Y:上, Z:前(奥)
+    camera.lookAt(0, 0, 0); // カメラは常に原点を見つめる
 
     // レンダラーを作成 (WebGL)
     const canvas = document.querySelector('#workbench-canvas');
     const renderer = new THREE.WebGLRenderer({
-        canvas: canvas, // 描画対象のCanvas要素を指定
-        antialias: true // アンチエイリアスを有効化 (線のギザギザを軽減)
+        canvas: canvas,
+        antialias: true
     });
-    renderer.setPixelRatio(window.devicePixelRatio); // デバイスのピクセル比に合わせて解像度を調整
-    renderer.setSize(window.innerWidth, window.innerHeight); // レンダラーのサイズをウィンドウに合わせる
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
 
     // ライトを作成
     // 1. 環境光 (全体を均一に照らす)
-    const ambientLight = new THREE.AmbientLight(0x808080); // 光の色 (灰色)
+    const ambientLight = new THREE.AmbientLight(0x808080);
     scene.add(ambientLight);
 
     // 2. 平行光 (太陽光のような光源)
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // 光の色 (白), 強さ
-    directionalLight.position.set(5, 10, 7); // 光の方向を設定
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    // --- 修正点: 光源の位置を調整 ---
+    // 原点の「左前上空」あたりから照らすように設定
+    directionalLight.position.set(-10, 15, -10); // やや左上前方から
     scene.add(directionalLight);
 
     // 作成した要素をオブジェクトとして返す
