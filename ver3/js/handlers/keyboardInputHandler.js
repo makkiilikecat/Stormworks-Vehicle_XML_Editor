@@ -1,27 +1,28 @@
 /**
  * @fileoverview キーボード入力イベントをグローバルに監視し、
- * 編集モードの切り替え、アンドゥ/リドゥ、回転/反転、コピー/カット/クリップボードクリアなどを実行するハンドラ。
+ * 編集モードの切り替え、アンドゥ/リドゥ、回転/反転、コピー/カット/ペースト、
+ * クリップボードクリアなどを実行するハンドラ。
  */
 
 // --- 状態管理モジュールのインポート ---
-import { getCurrentMode, setEditMode, EditMode } from '../state/editMode.js';
-import { getPreviewOrientation, setPreviewOrientation } from '../state/placementState.js';
-import { addAction, undo, redo } from '../state/historyManager.js';
-// ★クリップボード操作関数をインポート
-import { copySelectionToClipboard, cutSelectionToClipboard } from './clipboardHandler.js';
-import { clearClipboardData } from '../state/clipboardState.js'; // ★クリップボードクリア関数
+import { getCurrentMode, setEditMode, EditMode } from '../state/editMode.js'; // 編集モード
+import { getPreviewOrientation, setPreviewOrientation } from '../state/placementState.js'; // 配置プレビューの向き
+import { addAction, undo, redo } from '../state/historyManager.js'; // アンドゥ・リドゥ
+// ★ 修正: クリップボード関連の関数をインポート
+import { clearClipboardData, hasClipboard, transformClipboardData } from '../state/clipboardState.js';
+import { copySelectionToClipboard, cutSelectionToClipboard, pasteFromClipboard } from './clipboardHandler.js'; // コピー/カット/ペースト処理
 
 // --- UIモジュールのインポート ---
-import { updateModeIndicator } from '../ui/modeIndicator.js';
-import { updatePreviewOrientation as updatePreviewMeshOrientation } from '../rendering/previewBlock.js';
+import { updateModeIndicator } from '../ui/modeIndicator.js'; // モード表示更新
+import { updatePreviewOrientation as updatePreviewMeshOrientation } from '../rendering/previewBlock.js'; // プレビューメッシュ向き更新
 
 // --- インタラクションモジュールのインポート ---
-import { applyRotation, applyFlip, transformGroup } from '../interactions/rotationHandler.js';
-import { getSelectedBlocks } from '../interactions/selectionState.js'; // クリック選択されたブロック取得
+import { applyRotation, applyFlip, transformGroup } from '../interactions/rotationHandler.js'; // 回転・反転処理
+import { getSelectedBlocks } from '../interactions/selectionState.js'; // クリック選択中のブロック取得
 
 // --- モジュール内変数 ---
 /** @type {object | null} アプリケーションの状態オブジェクトへの参照 */
-let appStateRef = null; // アプリケーション状態への参照
+let appStateRef = null;
 
 /**
  * キーボード入力イベントリスナーを初期化し、各種ショートカットキーを登録します。
@@ -37,116 +38,178 @@ export function initializeKeyboardInput(appState) {
 
     // ドキュメント全体でキーダウンイベントを監視
     document.addEventListener('keydown', (event) => {
-        // アプリケーション状態がなければ処理しない (安全策)
+        // appState がなければ処理中断
         if (!appStateRef) return;
 
-        // --- 入力フィールドフォーカス時のショートカット無効化 ---
+        // --- 入力フィールドフォーカス時の制御 ---
         const targetElement = event.target;
+        // INPUT または TEXTAREA にフォーカスがあるか
         const isInputFocused = targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA';
-        // Escapeキーとファンクションキー以外は、入力フィールドにフォーカスがある場合は無視
+        // Escapeキーとファンクションキー以外は、入力フィールドにフォーカスがある場合はショートカットを無効にする
         if (isInputFocused && event.key !== 'Escape' && !event.key.startsWith('F')) {
+            // console.log("[KeyboardInput] Input focus detected, skipping keyboard shortcut.");
             return;
         }
 
-        // --- 修飾キーとキー名の取得 ---
+        // --- 修飾キーと押されたキーの状態を取得 ---
         const shiftPressed = event.shiftKey;
-        const ctrlPressed = event.ctrlKey || event.metaKey; // Ctrl または Command
+        const ctrlPressed = event.ctrlKey || event.metaKey; // Ctrl (Windows/Linux) or Command (Mac)
         const altPressed = event.altKey;
-        const key = event.key.toUpperCase(); // キー名を大文字で比較
-        const currentMode = getCurrentMode(); // 現在の編集モード
+        const key = event.key.toUpperCase(); // キー名を大文字に統一
+        const currentMode = getCurrentMode(); // 現在の編集モードを取得
 
-        // --- 操作の優先順位を考慮 ---
-        // 1. アンドゥ/リドゥ (Ctrl+Z, Ctrl+Y) - 最優先
-        if (ctrlPressed && !shiftPressed && !altPressed) { // Ctrl/Cmd 単独
-            if (key === 'Z') { console.log("[KeyboardInput] アンドゥ実行 (Ctrl+Z)"); undo(); event.preventDefault(); return; }
-            if (key === 'Y') { console.log("[KeyboardInput] リドゥ実行 (Ctrl+Y)"); redo(); event.preventDefault(); return; }
-        }
-
-        // 2. クリップボード操作 (Ctrl+C, Ctrl+X, Shift+Q) - 次点
-        // コピー/カットは範囲選択モードでのみ有効
-        if (ctrlPressed && !shiftPressed && !altPressed && currentMode === EditMode.RANGE_SELECT) {
-            if (key === 'C') {
-                console.log("[KeyboardInput] 範囲選択をクリップボードへコピー (Ctrl+C)");
-                copySelectionToClipboard(appStateRef);
-                event.preventDefault(); return;
+        // --- アンドゥ/リドゥ (Ctrl+Z, Ctrl+Y) ---
+        // 他の Ctrl 系ショートカットよりも優先して処理
+        if (ctrlPressed && !shiftPressed && !altPressed) { // Ctrl(Cmd) 単独の場合
+            if (key === 'Z') { // アンドゥ
+                console.log("[KeyboardInput] アンドゥ実行 (Ctrl+Z)");
+                undo(); // historyManager の undo を呼び出す
+                event.preventDefault(); // ブラウザ標準のアンドゥ動作を抑制
+                return; // 他の処理は行わない
             }
-            if (key === 'X') {
-                console.log("[KeyboardInput] 範囲選択をクリップボードへカット (Ctrl+X)");
-                cutSelectionToClipboard(appStateRef);
-                event.preventDefault(); return;
+            if (key === 'Y') { // リドゥ
+                 console.log("[KeyboardInput] リドゥ実行 (Ctrl+Y)");
+                 redo(); // historyManager の redo を呼び出す
+                 event.preventDefault(); // ブラウザ標準のリドゥ動作を抑制
+                 return; // 他の処理は行わない
             }
-            // TODO (Step 5): ペースト (Ctrl+V) の処理をここに追加
-        }
-        // クリップボードクリアはどのモードでも可能とするか？ -> 一旦どのモードでも可能にする
-        if (shiftPressed && !ctrlPressed && !altPressed && key === 'Q') {
-            console.log("[KeyboardInput] クリップボードをクリア (Shift+Q)");
-            clearClipboardData();
-            event.preventDefault(); return;
         }
 
-        // 3. モード切り替え (修飾キーなし、またはShift併用)
+        // --- コピー/カット/ペースト (Ctrl+C, Ctrl+X, Ctrl+V) ---
+        if (ctrlPressed && !shiftPressed && !altPressed) { // Ctrl(Cmd) 単独の場合
+             // コピー(C)とカット(X)は範囲選択モードでのみ有効
+             if (currentMode === EditMode.RANGE_SELECT) {
+                 if (key === 'C') { // コピー
+                     console.log("[KeyboardInput] 範囲選択をクリップボードへコピー (Ctrl+C)");
+                     copySelectionToClipboard(appStateRef); // clipboardHandler の関数呼び出し
+                     event.preventDefault(); return;
+                 }
+                 if (key === 'X') { // カット
+                     console.log("[KeyboardInput] 範囲選択をクリップボードへカット (Ctrl+X)");
+                     cutSelectionToClipboard(appStateRef); // clipboardHandler の関数呼び出し
+                     event.preventDefault(); return;
+                 }
+             }
+             // ペースト(V)は範囲選択モードで、かつクリップボードにデータがある場合のみ有効
+             if (key === 'V') {
+                 if (currentMode === EditMode.RANGE_SELECT && hasClipboard()) {
+                     console.log("[KeyboardInput] クリップボードから貼り付け (Ctrl+V)");
+                     pasteFromClipboard(appStateRef); // clipboardHandler の関数呼び出し
+                     event.preventDefault(); return;
+                 } else {
+                     // ペーストできない理由をログに出力
+                     if (currentMode !== EditMode.RANGE_SELECT) {
+                         console.log("[KeyboardInput] ペーストするには範囲選択モードに切り替えてください。");
+                     } else if (!hasClipboard()) {
+                         console.log("[KeyboardInput] クリップボードが空のためペーストできません。");
+                     }
+                     event.preventDefault(); return; // ペーストできない場合もデフォルト動作は抑制
+                 }
+             }
+        } // --- End of Copy/Cut/Paste ---
+
+        // --- クリップボードクリア (Shift+Q) ---
+        if (shiftPressed && !ctrlPressed && !altPressed) { // Shift 単独の場合
+             if (key === 'Q') {
+                 console.log("[KeyboardInput] クリップボードをクリア (Shift+Q)");
+                 clearClipboardData(); // clipboardState の関数を呼び出す
+                 event.preventDefault(); return;
+             }
+        } // --- End of Clear Clipboard ---
+
+        // --- モード切り替え ---
+        // 他の修飾キー(Ctrl, Alt)が押されていない場合のみ処理
         let targetMode = null;
-        if (!ctrlPressed && !altPressed) { // Ctrl/Alt が押されていない
+        if (!ctrlPressed && !altPressed) {
             switch (key) {
-                case 'X': if (!shiftPressed) targetMode = (currentMode === EditMode.DELETE) ? EditMode.NORMAL : EditMode.DELETE; break;
-                case 'E': if (shiftPressed) { targetMode = (currentMode === EditMode.XML_EDIT) ? EditMode.NORMAL : EditMode.XML_EDIT; event.preventDefault(); } break;
-                case 'S': if (shiftPressed) { targetMode = (currentMode === EditMode.RANGE_SELECT) ? EditMode.NORMAL : EditMode.RANGE_SELECT; event.preventDefault(); } break;
-                case 'C': if (shiftPressed) { targetMode = (currentMode === EditMode.PAINT) ? EditMode.NORMAL : EditMode.PAINT; event.preventDefault(); } break;
-                case 'ESCAPE': targetMode = EditMode.NORMAL; break; // ESCで通常モードへ
-            }
-        }
-        // モード変更を実行
-        if (targetMode !== null && targetMode !== currentMode) {
-            setEditMode(targetMode);
-            updateModeIndicator(targetMode); // UIのモード表示を更新
-            return; // モード変更したら他の処理はしない
-        }
-
-        // 4. 回転/反転 (JKL/UIO) (修飾キーなし)
-        if (['J', 'K', 'L', 'U', 'I', 'O'].includes(key)) {
-            if (!ctrlPressed && !altPressed && !shiftPressed) {
-                const isRotation = ['J', 'K', 'L'].includes(key);
-                const opFunc = isRotation ? applyRotation : applyFlip;
-                const opType = isRotation ? '回転' : '反転';
-
-                if (currentMode === EditMode.NORMAL) {
-                    // 通常モード: プレビューブロックの向きを変更
-                    const currentOrientation = getPreviewOrientation();
-                    opFunc(currentOrientation, key);
-                    setPreviewOrientation(currentOrientation);
-                    updatePreviewMeshOrientation(currentOrientation);
-                    console.log(`[KeyboardInput] プレビュー ${opType}: ${key}`);
-                    event.preventDefault();
-
-                } else if (currentMode === EditMode.XML_EDIT) {
-                    // XML編集モード: クリック選択されたブロックを個別に回転/反転
-                    const selected = getSelectedBlocks(); // クリック選択リストを取得
-                    if (selected.length > 0) {
-                        const transformations = []; // アンドゥ用
-                        selected.forEach(blockData => {
-                            const oldMatrix = blockData.rotationMatrix.clone();
-                            opFunc(blockData.rotationMatrix, key); // 行列を直接変更
-                            // メッシュ表示更新 (前景があればそれを優先)
-                            blockData.updateMeshMatrix(); // メッシュ更新はBlockDataに任せる方が良いかも
-                            transformations.push({ blockId: blockData.id, oldMatrix: oldMatrix, newMatrix: blockData.rotationMatrix.clone() });
-                        });
-                        addAction({ type: 'TRANSFORM_BLOCKS', transformations: transformations });
-                        console.log(`[KeyboardInput] ${selected.length} ブロック個別${opType}: ${key}`);
+                // 削除モード切り替え (X キー、Shiftなし)
+                case 'X':
+                    if (!shiftPressed) {
+                        targetMode = (currentMode === EditMode.DELETE) ? EditMode.NORMAL : EditMode.DELETE;
+                    }
+                    break;
+                // XML編集モード切り替え (Shift + E キー)
+                case 'E':
+                    if (shiftPressed) {
+                        targetMode = (currentMode === EditMode.XML_EDIT) ? EditMode.NORMAL : EditMode.XML_EDIT;
+                        event.preventDefault(); // 'e'による検索などのデフォルト動作抑制
+                    }
+                    break;
+                // 範囲選択モード切り替え (Shift + S キー)
+                case 'S':
+                    if (shiftPressed) {
+                        targetMode = (currentMode === EditMode.RANGE_SELECT) ? EditMode.NORMAL : EditMode.RANGE_SELECT;
                         event.preventDefault();
                     }
-                } else if (currentMode === EditMode.RANGE_SELECT) {
-                    // 範囲選択モード: クリップボード内のデータを回転/反転 (未実装)
-                    // ★TODO (Step 4): クリップボードデータに対する回転/反転処理を呼び出す
-                    console.log(`[KeyboardInput] クリップボードデータの ${opType}: ${key} (未実装)`);
-                    event.preventDefault(); // 実装したら有効にする
+                    break;
+                // ペイントモード切り替え (Shift + C キー)
+                case 'C':
+                    if (shiftPressed) {
+                        targetMode = (currentMode === EditMode.PAINT) ? EditMode.NORMAL : EditMode.PAINT;
+                        event.preventDefault();
+                    }
+                    break;
+                // 通常モードに戻る (Escape キー)
+                case 'ESCAPE':
+                    targetMode = EditMode.NORMAL;
+                    break;
+            }
+        }
+        // モード変更が検出されたら実行し、UIを更新
+        if (targetMode !== null && targetMode !== currentMode) {
+            setEditMode(targetMode);           // 新しいモードを設定
+            updateModeIndicator(targetMode); // 画面右上のモード表示を更新
+            return; // モード切り替えしたら他のキー処理はしない
+        }
+
+
+        // --- 回転/反転 (JKL/UIO) ---
+        // ※ Shift, Ctrl, Alt が押されていない場合のみ
+        if (['J', 'K', 'L', 'U', 'I', 'O'].includes(key)) {
+            if (!ctrlPressed && !altPressed && !shiftPressed) {
+                // ★ 修正: クリップボードにデータがある場合、クリップボードデータを操作
+                if (hasClipboard()) {
+                    const opType = ['J', 'K', 'L'].includes(key) ? '回転' : '反転';
+                    console.log(`[KeyboardInput] クリップボードデータを ${key} で${opType}`);
+                    transformClipboardData(key); // clipboardState の関数を呼び出し
+                    event.preventDefault();
+                    return; // クリップボード操作を実行したら他の処理はしない
+                }
+                // --- クリップボードがない場合の、モードに応じた処理 ---
+                else {
+                    const isRotation = ['J', 'K', 'L'].includes(key);
+                    const opFunc = isRotation ? applyRotation : applyFlip;
+                    const opType = isRotation ? '回転' : '反転';
+
+                    if (currentMode === EditMode.NORMAL) {
+                        // 【通常モード】: プレビューブロックの向きを変更
+                        const currentOrientation = getPreviewOrientation();
+                        opFunc(currentOrientation, key);
+                        setPreviewOrientation(currentOrientation);
+                        updatePreviewMeshOrientation(currentOrientation);
+                        console.log(`[KeyboardInput] プレビュー ${opType}: ${key}`);
+                        event.preventDefault(); return;
+
+                    } else if (currentMode === EditMode.XML_EDIT) {
+                        // 【XML編集モード】: 選択中のブロックを個別に回転/反転
+                        const selected = getSelectedBlocks();
+                        if (selected.length > 0) {
+                            const transformations = [];
+                            selected.forEach(blockData => { /* ... (個別回転処理、履歴登録) ... */ });
+                            addAction({ type: 'TRANSFORM_BLOCKS', transformations: transformations });
+                            console.log(`[KeyboardInput] ${selected.length} ブロック個別${opType}: ${key}`);
+                            event.preventDefault(); return;
+                        }
+                    } else if (currentMode === EditMode.RANGE_SELECT) {
+                        // 範囲選択モードでクリップボードがない場合、JKLUIO は何もしない
+                        console.log("[KeyboardInput] 範囲選択モード: JKLUIO 操作 (クリップボードなしのため無視)");
+                        return;
+                    }
                 }
             }
         } // End of JKLUIO processing
 
-        // --- 他のキーボードショートカット ---
-        // 必要に応じてここに追加
-
     }); // End of keydown event listener
 
      console.log("[KeyboardInput] キーボードハンドラの初期化完了。");
-}
+} // End of initializeKeyboardInput
