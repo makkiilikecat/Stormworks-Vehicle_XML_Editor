@@ -17,8 +17,6 @@ const _scale = new THREE.Vector3(); // 分解用
 const _invMatrix = new THREE.Matrix4();
 
 // ★ 感度パラメータ (これらの値は操作感をみて調整してください)
-const STRETCH_SENSITIVITY = 4.0; // 1m相当のドラッグで長さが4変化するイメージ
-const SHEAR_SENSITIVITY = 4.0;   // 1m相当のドラッグでずれ量が4変化するイメージ
 
 /**
  * BlockTransformControllerを初期化します。

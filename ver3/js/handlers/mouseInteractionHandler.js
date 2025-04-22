@@ -1,161 +1,158 @@
 /**
- * @fileoverview Canvas上でのマウス操作イベントを処理し、モードに応じて適切なアクションを実行。
+ * @fileoverview Canvas上でのマウス操作イベントを捕捉し、現在の編集モードに応じて
+ * 対応するインタラクションハンドラモジュールに処理を委譲するディスパッチャ。
  */
 
-import * as THREE from 'three';
-import { getCurrentMode, EditMode, allowsBlockPlacement } from '../state/editMode.js';
-import { handleSelectionClick, clearSelection } from '../interactions/selectionHandler.js';
-import { deleteBlock, placeBlock } from '../interactions/blockActions.js';
-import { getPlacementInfo } from '../interactions/placementHandler.js';
-import { showPreviewBlock, hidePreviewBlock } from '../rendering/previewBlock.js';
-import { getCurrentPlacementBlockId, getPreviewOrientation } from '../state/placementState.js';
-import { handleDragTransformPointerDown, handleDragTransformPointerMove, handleDragTransformPointerUp } from '../interactions/dragTransformHandler.js';
-import { hideGhostBlock } from '../rendering/ghostBlock.js'; // ドラッグキャンセル用
+import * as THREE from 'three'; // 基本的な型定義のためにインポートする場合がある
+import { getCurrentMode, EditMode } from '../state/editMode.js';
+// 各モードに対応するインタラクションハンドラをインポート
+import * as rangeInteraction from './rangeInteractionHandler.js';
+import * as xmlEditInteraction from './xmlEditInteractionHandler.js';
+import * as normalInteraction from './normalInteractionHandler.js';
+import * as deleteInteraction from './deleteInteractionHandler.js';
+// import * as paintInteraction from './paintInteractionHandler.js'; // 将来のペイントモード用
 
-// ドラッグ変形中かどうかのフラグ (このハンドラ内で管理)
-let isDraggingTransform = false;
+// --- ヘルパー関数 ---
 
 /**
- * マウスイベントからマウスの正規化デバイス座標を計算します。
- * @param {MouseEvent} event - マウスイベント。
- * @param {HTMLElement} domElement - レンダラーのDOM要素。
+ * マウスイベントからマウスの正規化デバイス座標 (-1 to +1) を計算します。
+ * @param {PointerEvent} event - マウスイベント。
+ * @param {HTMLElement} domElement - レンダラーのDOM要素 (通常はCanvas)。
  * @returns {THREE.Vector2} 正規化デバイス座標。
- * @private
  */
-function getMouseNDCFromEvent(event, domElement) {
+export function getMouseNDCFromEvent(event, domElement) { // エクスポートして他のハンドラから使えるようにする
     const rect = domElement.getBoundingClientRect();
-    const mouse = new THREE.Vector2();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    return mouse;
+    // pageX/YではなくclientX/Yを使う (スクロールの影響を受けない)
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    // NDC座標系に変換
+    const ndcX = (x / rect.width) * 2 - 1;
+    const ndcY = -(y / rect.height) * 2 + 1;
+    return new THREE.Vector2(ndcX, ndcY);
 }
 
 
+// --- 公開イベントハンドラ関数 (イベントリスナーから呼ばれる) ---
+
 /**
- * Canvas上でポインター（マウス左ボタン）が押されたときの処理。
- * @param {PointerEvent} event
+ * Canvas上でポインターが押されたときの処理。モードに応じて処理を委譲。
+ * @param {PointerEvent} event - PointerEventオブジェクト。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handleCanvasPointerDown(event, appState) {
-    const { camera, scene, renderer, controls, loadedBlocks } = appState;
-    if (event.button !== 0 || !controls.enabled) return; // 左ボタン以外 or カメラ操作中は無視
-
+    if (event.button !== 0 || !appState.controls.enabled) return; // 左ボタン、コントロール有効時のみ
     const currentMode = getCurrentMode();
 
-    // --- ドラッグ変形開始判定 (XML編集モード) ---
-    if (currentMode === EditMode.XML_EDIT) {
-        const dragStarted = handleDragTransformPointerDown(
-            event, camera, scene, renderer.domElement,
-            () => controls.enabled = false // disableControls コールバック
-        );
-        if (dragStarted) {
-            isDraggingTransform = true;
-            return; // ドラッグ開始したら他の処理はしない
-        }
-        // ドラッグ開始しなかった場合は、下の選択処理へ
-    }
-
-    // --- 通常のクリック処理 (削除、配置、選択) ---
-    if (currentMode === EditMode.DELETE) {
-        // 削除
-        const placementInfo = getPlacementInfo(event, camera, loadedBlocks, renderer.domElement);
-        if (placementInfo?.targetBlock) {
-            deleteBlock(placementInfo.targetBlock, loadedBlocks, scene);
-        }
-    } else if (allowsBlockPlacement(currentMode)) { // 通常モード
-        // 配置
-        const placementInfo = getPlacementInfo(event, camera, loadedBlocks, renderer.domElement);
-        if (placementInfo) {
-            const blockIdToPlace = getCurrentPlacementBlockId();
-            const orientationMatrix = getPreviewOrientation();
-            const placedBlock = placeBlock(placementInfo.position, orientationMatrix, blockIdToPlace, loadedBlocks, scene);
-            if (placedBlock) {
-                updatePreview(event, appState); // 配置後もプレビュー更新
-            }
-        } else {
-            clearSelection(); // 配置できない場所をクリックしたら選択解除
-        }
-    } else {
-        // 選択 (XML編集モードでドラッグ開始しなかった場合など)
-        handleSelectionClick(
-            event, event.ctrlKey || event.metaKey,
-            camera, scene, renderer.domElement, loadedBlocks
-        );
+    switch (currentMode) {
+        case EditMode.RANGE_SELECT:
+            rangeInteraction.handlePointerDown(event, appState);
+            break;
+        case EditMode.XML_EDIT:
+            xmlEditInteraction.handlePointerDown(event, appState);
+            break;
+        case EditMode.NORMAL:
+            normalInteraction.handlePointerDown(event, appState);
+            break;
+        case EditMode.DELETE:
+            deleteInteraction.handlePointerDown(event, appState);
+            break;
+        case EditMode.PAINT:
+            // paintInteraction.handlePointerDown(event, appState);
+            console.log("[MouseInteraction] ペイントモードの PointerDown は未実装です。");
+            break;
+        default:
+            console.warn(`[MouseInteraction] 未知のモード (${currentMode}) で PointerDown が発生しました。`);
     }
 }
 
 /**
- * Canvas上でポインター（マウス）が移動したときの処理。
- * @param {PointerEvent} event
+ * Canvas上でポインター（マウス）が移動したときの処理。モードに応じて処理を委譲。
+ * @param {PointerEvent} event - PointerEventオブジェクト。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handleCanvasPointerMove(event, appState) {
-    const { camera, renderer, scene, loadedBlocks } = appState;
+    // マウス移動は頻繁に発生するため、委譲先のハンドラで controls.enabled をチェックする
+    const currentMode = getCurrentMode();
 
-    // --- ドラッグ変形中の処理 ---
-    if (isDraggingTransform) {
-        handleDragTransformPointerMove(event, camera, renderer.domElement, scene);
-        return;
-    }
-
-    // --- 通常モードのプレビュー更新 ---
-    if (getCurrentMode() === EditMode.NORMAL) {
-        updatePreview(event, appState);
-    } else {
-        hidePreviewBlock(); // 他のモードではプレビュー非表示
+    switch (currentMode) {
+        case EditMode.RANGE_SELECT:
+            rangeInteraction.handlePointerMove(event, appState);
+            break;
+        case EditMode.XML_EDIT:
+            xmlEditInteraction.handlePointerMove(event, appState);
+            break;
+        case EditMode.NORMAL:
+            normalInteraction.handlePointerMove(event, appState);
+            break;
+        case EditMode.DELETE:
+            deleteInteraction.handlePointerMove(event, appState);
+            break;
+        case EditMode.PAINT:
+            // paintInteraction.handlePointerMove(event, appState);
+            break;
+        default:
+            // 未知のモードでは何もしない
+            break;
     }
 }
 
 /**
- * Canvas上でポインター（マウス左ボタン）が離されたときの処理。
- * @param {PointerEvent} event
+ * Canvas上でポインター（通常はマウス左ボタン）が離されたときの処理。モードに応じて処理を委譲。
+ * @param {PointerEvent} event - PointerEventオブジェクト。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handleCanvasPointerUp(event, appState) {
-    const { controls } = appState;
-    if (event.button !== 0) return;
+    if (event.button !== 0) return; // 左ボタンのみ
+    const currentMode = getCurrentMode();
 
-    // --- ドラッグ変形終了処理 ---
-    if (isDraggingTransform) {
-        handleDragTransformPointerUp(event, () => controls.enabled = true); // enableControls コールバック
-        isDraggingTransform = false;
+    switch (currentMode) {
+        case EditMode.RANGE_SELECT:
+            rangeInteraction.handlePointerUp(event, appState);
+            break;
+        case EditMode.XML_EDIT:
+            xmlEditInteraction.handlePointerUp(event, appState);
+            break;
+        case EditMode.NORMAL:
+            normalInteraction.handlePointerUp(event, appState);
+            break;
+        case EditMode.DELETE:
+            deleteInteraction.handlePointerUp(event, appState);
+            break;
+        case EditMode.PAINT:
+            // paintInteraction.handlePointerUp(event, appState);
+            break;
+        default:
+            // 未知のモードでは何もしない
+            break;
     }
-
-    // --- 他のPointerUp処理（例：UI更新トリガー） ---
-    // updateXmlEditUIIfNeeded(); // これはカスタムイベントで行う方が良い
 }
 
 /**
- * Canvasからポインターが離れたときの処理。
+ * Canvasからポインターが離れたときの処理。モードに応じて処理を委譲。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handleCanvasPointerLeave(appState) {
-     const { controls } = appState;
-    // ドラッグ中に離れた場合は強制終了
-    if (isDraggingTransform) {
-        console.log("Pointer left canvas during drag, canceling transform.");
-        handleDragTransformPointerUp(null, () => controls.enabled = true);
-        isDraggingTransform = false;
-        hideGhostBlock(); // ゴーストも隠す
-    }
-    // 通常モードのプレビューも隠す
-    hidePreviewBlock();
-}
+    // PointerLeave はどのモードでも発生しうる
+    const currentMode = getCurrentMode();
 
-
-/**
- * 通常モード時にプレビューブロックの位置と向きを更新します。
- * @param {MouseEvent} event - マウスイベント。
- * @param {object} appState - アプリケーションの状態オブジェクト。
- * @private
- */
-function updatePreview(event, appState){
-    const { camera, loadedBlocks, renderer, scene } = appState;
-    const placementInfo = getPlacementInfo(event, camera, loadedBlocks, renderer.domElement);
-    if (placementInfo) {
-        const orientationMatrix = getPreviewOrientation();
-        showPreviewBlock(scene, placementInfo.position, orientationMatrix);
-    } else {
-        hidePreviewBlock();
+    switch (currentMode) {
+        case EditMode.RANGE_SELECT:
+            rangeInteraction.handlePointerLeave(appState);
+            break;
+        case EditMode.XML_EDIT:
+            xmlEditInteraction.handlePointerLeave(appState);
+            break;
+        case EditMode.NORMAL:
+            normalInteraction.handlePointerLeave(appState);
+            break;
+        case EditMode.DELETE:
+            deleteInteraction.handlePointerLeave(appState);
+            break;
+        case EditMode.PAINT:
+            // paintInteraction.handlePointerLeave(appState);
+            break;
+        default:
+            // 未知のモードでは何もしない
+            break;
     }
 }

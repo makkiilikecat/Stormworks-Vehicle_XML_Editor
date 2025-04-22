@@ -1,5 +1,5 @@
-import * as THREE from 'three'; // Matrix4のため
-import { getSelectedBlocks } from '../interactions/selectionHandler.js';
+import * as THREE from 'three';
+import { getSelectedBlocks } from '../interactions/selectionState.js'; // ← 修正: selectionState からインポート
 import { addAction } from '../state/historyManager.js';
 
 // --- UI要素への参照 ---

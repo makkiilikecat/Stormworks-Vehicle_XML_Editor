@@ -1,16 +1,17 @@
-import * as THREE from 'three';
-import { getCurrentMode, allowsBlockSelection, EditMode } from '../state/editMode.js';
-// --- 修正: highlightHelper と xmlEditUI をインポート ---
-import { highlightMesh, unhighlightMesh, clearAllHighlights } from '../rendering/highlightHelper.js';
-import { updateXmlEditUI } from '../ui/xmlEditUI.js';
-// ----------------------------------------------------
+/**
+ * @fileoverview マウスクリックによるブロック選択インタラクションを処理するモジュール。
+ * Raycastingを行い、選択状態の変更は selectionState モジュールに委譲する。
+ */
 
-// --- 状態変数 ---
-let selectedBlocks = []; // 複数選択に対応するため配列に変更
+import * as THREE from 'three';
+import { getSelectedBlocks, setSelectedBlocks, clearSelection } from './selectionState.js'; // ← 修正: selectionState からインポート
+import { getCurrentMode, allowsBlockSelection, EditMode } from '../state/editMode.js';
 
 // --- Raycasting用 ---
 const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+const mouse = new THREE.Vector2(); // マウスの正規化デバイス座標 (-1 to +1)
+
+// --- プライベート関数 ---
 
 /**
  * マウスイベントからマウスの正規化デバイス座標を計算します。
@@ -26,98 +27,93 @@ function getMouseNDC(event, domElement) {
     return mouse;
 }
 
+// --- 公開関数 ---
+
 /**
- * マウスクリックイベントに基づいてブロック選択を処理します (単一/複数)。
- * ハイライト処理は highlightHelper を呼び出します。
- * @param {MouseEvent} event - マウスイベント。
- * @param {boolean} ctrlPressed - Ctrlキーが押されているか。
- * @param {THREE.Camera} camera - カメラ。
- * @param {THREE.Scene} scene - シーン (現在は未使用だが将来のため残す)。
+ * マウスクリックイベントに基づいてブロック選択インタラクションを実行します。
+ * クリック位置からブロックを特定し、単一/複数選択状態を更新します。
+ * 実際の状態変更は selectionState モジュールに依頼します。
+ * @param {PointerEvent} event - マウスイベント (pointerdown)。
+ * @param {boolean} ctrlPressed - Ctrlキー（またはMacのCommandキー）が押されているか。
+ * @param {THREE.Camera} camera - シーンのカメラ。
+ * @param {THREE.Scene} scene - シーン。
  * @param {HTMLElement} domElement - レンダラーDOM要素。
- * @param {BlockData[]} loadedBlocks - ブロックデータ配列。
+ * @param {BlockData[]} loadedBlocks - 読み込まれている全ブロックデータの配列。
  */
 export function handleSelectionClick(event, ctrlPressed, camera, scene, domElement, loadedBlocks) {
     const currentMode = getCurrentMode();
-    // 選択不可モードなら選択解除のみ
+
+    // 現在のモードでクリックによる選択が許可されているか確認
     if (!allowsBlockSelection(currentMode)) {
-        clearSelection(); // clearSelection内でUI更新もトリガーされる
-        console.log("Selection cleared (mode restriction).");
+        console.log("[SelectionHandler] 現在のモードではクリックによる選択は許可されていません。");
+        // 必要なら既存の選択をクリアする (selectionState側でモード変更時にクリアされるはず)
+        // clearSelection();
         return;
     }
 
+    // マウス座標からRaycastingを実行
     const mouseNDC = getMouseNDC(event, domElement);
     raycaster.setFromCamera(mouseNDC, camera);
-    // 有効なメッシュのみを対象にする
-    const meshesToIntersect = loadedBlocks.map(b => b.mesh).filter(m => m && m.parent === scene);
+
+    // 交差判定の対象となるメッシュを選択 (XML編集モードのみ前景キューブ)
+    let meshesToIntersect = [];
+    if (currentMode === EditMode.XML_EDIT) {
+        meshesToIntersect = loadedBlocks.map(b => b.foregroundMesh).filter(m => m);
+    } else {
+        // ここに来ることは現状ないはず (allowsBlockSelection で弾かれるため)
+        console.warn(`[SelectionHandler] 予期しないモード(${currentMode})での選択試行。`);
+        return; // 念のため処理中断
+    }
+
+    // 交差判定実行
     const intersects = raycaster.intersectObjects(meshesToIntersect, false);
 
     let clickedBlockData = null;
     if (intersects.length > 0) {
-        // 交差したメッシュに対応するBlockDataを探す
-        // userDataにblockIdを格納しておくと効率的 (blockRendererで設定済み)
         const intersectedMesh = intersects[0].object;
-        clickedBlockData = loadedBlocks.find(block => block.id === intersectedMesh.userData.blockId);
-        // clickedBlockData = loadedBlocks.find(block => block.mesh === intersectedMesh); // 従来の探し方
+        if (intersectedMesh.userData?.blockId !== undefined) {
+            clickedBlockData = loadedBlocks.find(block => block.id === intersectedMesh.userData.blockId);
+        } else {
+             console.warn("[SelectionHandler] 交差したメッシュに blockId が見つかりません。", intersectedMesh);
+        }
     }
+
+    // --- 選択ロジック ---
+    const currentSelection = getSelectedBlocks(); // 現在の選択状態を取得
 
     if (ctrlPressed) {
-        // --- Ctrl + クリック: 選択状態のトグル ---
+        // --- Ctrl + クリック: トグル ---
         if (clickedBlockData) {
-            const index = selectedBlocks.findIndex(b => b.id === clickedBlockData.id);
+            const index = currentSelection.findIndex(b => b.id === clickedBlockData.id);
+            let newSelection;
             if (index > -1) {
-                // 既に選択されている -> 選択解除
-                unhighlightMesh(clickedBlockData); // ハイライト解除依頼
-                selectedBlocks.splice(index, 1);
-                console.log(`Block deselected: ID ${clickedBlockData.id}`);
+                // 選択解除
+                newSelection = currentSelection.filter(b => b.id !== clickedBlockData.id);
+                console.log(`[SelectionHandler] ブロック選択解除 (Ctrl): ID ${clickedBlockData.id}`);
             } else {
-                // 新たに選択に追加
-                highlightMesh(clickedBlockData); // ハイライト依頼
-                selectedBlocks.push(clickedBlockData);
-                console.log(`Block added to selection: ID ${clickedBlockData.id}`);
+                // 選択追加
+                newSelection = [...currentSelection, clickedBlockData];
+                console.log(`[SelectionHandler] ブロック選択追加 (Ctrl): ID ${clickedBlockData.id}`);
+            }
+            // selectionState に新しい選択状態を設定 (ハイライト更新も内部で行われる)
+            setSelectedBlocks(newSelection);
+        }
+        // 背景 Ctrl+クリックは何もしない
+    } else {
+        // --- 通常クリック: 単一選択 or 全解除 ---
+        if (clickedBlockData) {
+            // クリックしたブロックのみを選択状態にする
+            console.log(`[SelectionHandler] ブロック選択 (単一): ID ${clickedBlockData.id}`);
+            // 既に選択されている場合も、改めて単一選択として設定し直す
+            setSelectedBlocks([clickedBlockData]);
+        } else {
+            // 背景クリック: 全解除
+            // clearSelection は選択があった場合のみイベント発行などを行う
+            if (clearSelection()) { // clearSelectionを呼び出し、実際に解除されたか確認
+                 console.log("[SelectionHandler] 背景クリックにより選択解除。");
             }
         }
-        // 背景クリックは何もしない
-    } else {
-        // --- 通常クリック: 単一選択 (または全解除) ---
-        // 既存の選択を全て解除 (ハイライト解除も含む)
-        clearAllHighlights(selectedBlocks);
-        selectedBlocks = []; // 配列をクリア
-
-        if (clickedBlockData) {
-            // 新しくクリックしたブロックを選択
-            highlightMesh(clickedBlockData); // ハイライト依頼
-            selectedBlocks.push(clickedBlockData);
-            console.log(`Block selected: ID ${clickedBlockData.id}`);
-        } else {
-            console.log("Selection cleared (clicked background).");
-        }
-    }
-    console.log("Selected blocks:", selectedBlocks.map(b => b.id));
-    // 選択状態が変わったので、関連するUIを更新
-    updateXmlEditUI(); // XML編集UIを更新
-    // 他のUI（例: ステータスバーなど）も必要なら更新
-}
-
-/**
- * 現在選択されている全てのブロックデータを取得します。
- * @returns {BlockData[]} 選択中のBlockDataの配列のコピー。
- */
-export function getSelectedBlocks() {
-    // 外部で配列を変更できないようにコピーを返す
-    return [...selectedBlocks];
-}
-
-/**
- * 全てのブロック選択を解除し、ハイライトを元に戻します。
- */
-export function clearSelection() {
-    console.log("Clearing all selections.");
-    const hadSelection = selectedBlocks.length > 0;
-    // ハイライト解除ヘルパーを呼び出す
-    clearAllHighlights(selectedBlocks);
-    selectedBlocks = []; // 選択リストを空にする
-    // 選択が解除された場合もUIを更新
-    if (hadSelection) {
-        updateXmlEditUI();
     }
 }
+
+// initializeSelectionHandler は削除 (初期化は selectionState と main.js で行う)

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stormworks XML パーサー</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* フォントとしてInterを使用 */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* テーブルのスタイル */
+        th, td {
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0; /* Tailwindのgray-300 */
+            text-align: left;
+            vertical-align: top; /* 縦方向の揃えを上に */
+            word-break: break-all; /* 長い文字列を折り返す */
+        }
+        th {
+            background-color: #f1f5f9; /* Tailwindのslate-100 */
+        }
+        /* スクロール可能なテーブルコンテナ */
+        .table-container {
+            max-height: 60vh; /* ビューポートの高さの60%を最大高さに */
+            overflow-y: auto; /* 縦方向にスクロール可能に */
+            border: 1px solid #e2e8f0; /* Tailwindのgray-300 */
+            border-radius: 0.375rem; /* rounded-md */
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        /* ボタンのスタイル */
+        button {
+            transition: background-color 0.3s ease;
+        }
+        /* エラーメッセージのスタイル */
+        #error-message {
+            color: #ef4444; /* Tailwindのred-500 */
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-7xl mx-auto bg-white p-6 rounded-lg shadow-md">
+        <h1 class="text-2xl font-bold mb-4 text-gray-800">Stormworks XML パーサー</h1>
+
+        <div class="mb-4">
+            <label for="xmlFile" class="block text-sm font-medium text-gray-700 mb-2">XMLファイルを選択してください:</label>
+            <input type="file" id="xmlFile" accept=".xml" class="block w-full text-sm text-gray-500
+                file:mr-4 file:py-2 file:px-4
+                file:rounded-md file:border-0
+                file:text-sm file:font-semibold
+                file:bg-blue-50 file:text-blue-700
+                hover:file:bg-blue-100
+                cursor-pointer
+            "/>
+        </div>
+
+        <button id="parseButton" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md mb-4">
+            解析開始
+        </button>
+
+        <div id="error-message" class="mb-4 text-sm"></div>
+
+        <h2 class="text-xl font-semibold mb-2 text-gray-700">解析結果:</h2>
+        <div id="resultsContainer" class="table-container">
+            <table id="resultsTable" class="min-w-full bg-white rounded-md">
+                <thead class="sticky top-0 bg-slate-100">
+                    <tr>
+                        <th class="w-1/12">#</th>
+                        <th class="w-2/12">ブロックID (d)</th>
+                        <th class="w-1/12">バリエーション (t)</th>
+                        <th class="w-1/12">座標 (vp)</th>
+                        <th class="w-2/12">回転行列 (r)</th>
+                        <th class="w-1/12">色1 (bc)</th>
+                        <th class="w-1/12">色2 (bc2)</th>
+                        <th class="w-1/12">色3 (bc3)</th>
+                        <th class="w-1/12">色4 (ac)</th>
+                        <th class="w-2/12">表面色 (sc)</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                    </tbody>
+            </table>
+        </div>
+         <div id="loadingIndicator" class="hidden mt-4 text-center text-gray-600">
+            <p>解析中です...</p>
+        </div>
+    </div>
+
+    <script>
+        const parseButton = document.getElementById('parseButton');
+        const xmlFileInput = document.getElementById('xmlFile');
+        const resultsBody = document.getElementById('resultsBody');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const errorMessageDiv = document.getElementById('error-message');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+
+        parseButton.addEventListener('click', () => {
+            const file = xmlFileInput.files[0];
+            errorMessageDiv.textContent = ''; // エラーメッセージをクリア
+            resultsBody.innerHTML = ''; // 結果をクリア
+            loadingIndicator.classList.remove('hidden'); // ローディング表示
+
+            if (!file) {
+                errorMessageDiv.textContent = 'ファイルが選択されていません。';
+                loadingIndicator.classList.add('hidden'); // ローディング非表示
+                return;
+            }
+
+            if (file.type !== 'text/xml') {
+                errorMessageDiv.textContent = 'XMLファイルを選択してください。';
+                loadingIndicator.classList.add('hidden'); // ローディング非表示
+                return;
+            }
+
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                const xmlString = event.target.result;
+                try {
+                    parseAndDisplayXML(xmlString);
+                } catch (error) {
+                    console.error('XML解析エラー:', error);
+                    errorMessageDiv.textContent = `XMLの解析中にエラーが発生しました: ${error.message}`;
+                } finally {
+                     loadingIndicator.classList.add('hidden'); // ローディング非表示
+                }
+            };
+
+             reader.onerror = function(event) {
+                console.error('ファイル読み込みエラー:', event.target.error);
+                errorMessageDiv.textContent = 'ファイルの読み込み中にエラーが発生しました。';
+                loadingIndicator.classList.add('hidden'); // ローディング非表示
+            };
+
+            reader.readAsText(file);
+        });
+
+        function parseAndDisplayXML(xmlString) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+
+             // ルート要素の取得（エラーチェック用）
+            const vehicleElement = xmlDoc.documentElement;
+            if (!vehicleElement || vehicleElement.nodeName !== 'vehicle') {
+                 // もしルートがvehicleでなくても、componentを探してみる
+                console.warn('ルート要素が <vehicle> ではありませんが、解析を試みます。');
+                if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+                   throw new Error('XMLの形式が正しくありません。');
+                }
+            }
+
+            const components = xmlDoc.getElementsByTagName('c'); // <c> タグを取得
+            let componentIndex = 1;
+
+            if (components.length === 0) {
+                errorMessageDiv.textContent = 'XML内に <c> タグが見つかりませんでした。Stormworksのビークルデータではない可能性があります。';
+                return;
+            }
+
+            for (const component of components) {
+                const objectElement = component.querySelector('o'); // <c> の中の <o> を取得
+                const vpElement = objectElement ? objectElement.querySelector('vp') : null; // <o> の中の <vp> を取得
+
+                const blockId = component.getAttribute('d') || 'N/A'; // <c> の d 属性
+                const variation = component.getAttribute('t') || 'N/A'; // <c> の t 属性を追加
+
+                // <o> タグが存在する場合のみ属性を取得
+                const rotation = objectElement ? (objectElement.getAttribute('r') || 'N/A') : 'N/A';
+                const bc = objectElement ? (objectElement.getAttribute('bc') || 'N/A') : 'N/A';
+                const bc2 = objectElement ? (objectElement.getAttribute('bc2') || 'N/A') : 'N/A';
+                const bc3 = objectElement ? (objectElement.getAttribute('bc3') || 'N/A') : 'N/A';
+                const ac = objectElement ? (objectElement.getAttribute('ac') || 'N/A') : 'N/A';
+                const sc = objectElement ? (objectElement.getAttribute('sc') || 'N/A') : 'N/A';
+
+                // <vp> タグが存在する場合のみ座標を取得
+                let coords = 'N/A';
+                if (vpElement) {
+                    const x = vpElement.getAttribute('x');
+                    const y = vpElement.getAttribute('y');
+                    const z = vpElement.getAttribute('z');
+                    const coordsParts = [];
+                    if (x !== null) coordsParts.push(`x: ${x}`);
+                    if (y !== null) coordsParts.push(`y: ${y}`);
+                    if (z !== null) coordsParts.push(`z: ${z}`);
+                    coords = coordsParts.length > 0 ? coordsParts.join(', ') : '属性なし';
+                }
+
+                // テーブルに行を追加
+                const row = resultsBody.insertRow();
+                // t属性を表示するセルを追加
+                row.innerHTML = `
+                    <td>${componentIndex}</td>
+                    <td>${escapeHtml(blockId)}</td>
+                    <td>${escapeHtml(variation)}</td> {/* t属性の値 */}
+                    <td>${escapeHtml(coords)}</td>
+                    <td>${escapeHtml(rotation)}</td>
+                    <td style="background-color: #${bc}; color: ${getContrastColor(bc)}">${escapeHtml(bc)}</td>
+                    <td style="background-color: #${bc2}; color: ${getContrastColor(bc2)}">${escapeHtml(bc2)}</td>
+                    <td style="background-color: #${bc3}; color: ${getContrastColor(bc3)}">${escapeHtml(bc3)}</td>
+                    <td style="background-color: #${ac}; color: ${getContrastColor(ac)}">${escapeHtml(ac)}</td>
+                    <td>${escapeHtml(sc)}</td>
+                `;
+                componentIndex++;
+            }
+
+             if (componentIndex === 1) { // ループが一度も実行されなかった場合
+                errorMessageDiv.textContent = '解析可能なコンポーネントデータが見つかりませんでした。';
+            }
+        }
+
+        // HTMLエスケープ関数
+        function escapeHtml(unsafe) {
+            if (unsafe === null || unsafe === undefined || unsafe === 'N/A') return 'N/A';
+            return unsafe
+                 .toString()
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
+
+        // 背景色に基づいてコントラストの高い文字色（白か黒）を返す関数
+        function getContrastColor(hexColor) {
+            if (!hexColor || hexColor === 'N/A' || hexColor.length < 6) return '#000000'; // デフォルトは黒
+             try {
+                const r = parseInt(hexColor.substring(0, 2), 16);
+                const g = parseInt(hexColor.substring(2, 4), 16);
+                const b = parseInt(hexColor.substring(4, 6), 16);
+                // YIQ輝度計算
+                const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+                return (yiq >= 128) ? '#000000' : '#FFFFFF'; // 輝度に応じて黒か白を返す
+            } catch (e) {
+                return '#000000'; // エラー時は黒
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,91 +1,172 @@
 /**
- * @fileoverview アプリケーションのエントリーポイント。Three.js環境のセットアップ、
- * 主要モジュールの初期化、アニメーションループの実行を担当。
+ * @fileoverview Stormworks XML Editor アプリケーションのエントリーポイント。
+ * Three.js 環境のセットアップ、主要モジュールの初期化、
+ * アニメーションループの実行を担当します。
+ * 各種イベントの処理は eventManager および handlers/ 以下のモジュールに委譲します。
  */
 
+// --- Three.js 本体とアドオン ---
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// --- セットアップ関連モジュール ---
 import { setupSceneEnvironment, handleWindowResize } from './setup/sceneSetup.js';
 import { setupOrbitControls } from './setup/controlsSetup.js';
 import { setupHelpers } from './setup/helpersSetup.js';
+
+// --- オブジェクト・データ関連モジュール ---
 import { createOriginBlockData } from './objects/initialObjects.js';
+import { BlockData } from './data/blockData.js';
+
+// --- 状態管理モジュール ---
 import { setupHistoryManager } from './state/historyManager.js';
+import { getCurrentMode, EditMode } from './state/editMode.js';
+import { initializeSelectionState } from './interactions/selectionState.js';
+
+// --- UI関連モジュール ---
 import { updateModeIndicator } from './ui/modeIndicator.js';
 import { setupInventoryUI, updatePlacementIndicator } from './ui/inventoryUI.js';
-import { getCurrentMode } from './state/editMode.js';
-// --- リファクタリング: eventManager をインポート ---
+import { updateXmlEditUI, hideXmlEditPanel, showXmlEditPanel } from './ui/xmlEditUI.js';
+
+// --- レンダリング関連モジュール ---
+import { setRenderMode, clearBlocks, renderBlocks } from './rendering/blockRenderer.js';
+
+// --- イベント・ハンドラ関連モジュール ---
 import { initializeEventListeners, setApplicationState } from './events/eventManager.js';
-// -----------------------------------------
 
 // === グローバルアプリケーション状態 ===
-// 各モジュールからアクセスする必要がある主要なオブジェクトをまとめる
+/**
+ * アプリケーション全体で共有される主要なオブジェクトや状態を格納するオブジェクト。
+ * @type {{
+ * scene: THREE.Scene | null,
+ * camera: THREE.PerspectiveCamera | null,
+ * renderer: THREE.WebGLRenderer | null,
+ * controls: OrbitControls | null,
+ * loadedBlocks: BlockData[],
+ * selectedFile: File | null,
+ * canvas: HTMLCanvasElement | null
+ * }}
+ */
 const appState = {
     scene: null,
     camera: null,
     renderer: null,
     controls: null,
-    loadedBlocks: [], // 読み込んだ/配置したブロックデータ
-    selectedFile: null, // 最後に選択されたファイル
-    canvas: null,       // Canvas要素への参照
-    // isDraggingTransform: false, // ドラッグ状態は mouseInteractionHandler 内で管理
+    loadedBlocks: [],
+    selectedFile: null,
+    canvas: null,
 };
 // ==================================
 
 
 /**
  * アプリケーションの初期化処理。
- * Three.js環境、ヘルパー、初期オブジェクト、状態管理、UI、イベントリスナーを設定。
  */
 function init() {
-    console.log("Initializing application...");
+    console.log("[Main] アプリケーションの初期化を開始します...");
 
-    // --- Three.js 環境設定 ---
+    // 1. Three.js 環境設定
     const sceneEnv = setupSceneEnvironment();
     appState.scene = sceneEnv.scene;
     appState.camera = sceneEnv.camera;
     appState.renderer = sceneEnv.renderer;
-    appState.canvas = sceneEnv.renderer.domElement; // Canvas参照を状態に追加
+    appState.canvas = sceneEnv.renderer.domElement;
 
-    // --- カメラコントロール設定 ---
+    // 2. カメラコントロール設定
     appState.controls = setupOrbitControls(appState.camera, appState.renderer.domElement);
 
-    // --- ヘルパー設定 ---
+    // 3. ヘルパー設定
     setupHelpers(appState.scene);
 
-    // --- 初期オブジェクト生成とデータ設定 ---
+    // 4. 初期オブジェクト生成
     const originBlockData = createOriginBlockData(appState.scene);
-    appState.loadedBlocks.push(originBlockData); // 初期ブロックデータをセット
+    appState.loadedBlocks.push(originBlockData);
 
-    // --- 状態管理モジュール初期化 ---
-    setupHistoryManager(appState.scene, appState.loadedBlocks); // 履歴管理初期化
+    // 5. 状態管理モジュール初期化
+    setupHistoryManager(appState.scene, appState.loadedBlocks);
+    // ★修正: initializeSelectionState に appState.scene を渡す
+    initializeSelectionState(appState.scene);
 
-    // --- UIモジュール初期化 ---
+    // 6. UIモジュール初期化
     setupInventoryUI();
-    updateModeIndicator(getCurrentMode()); // 初期モード表示
-    updatePlacementIndicator(); // 初期配置ブロック表示
+    updateModeIndicator(getCurrentMode());
+    updatePlacementIndicator();
+    hideXmlEditPanel();
 
-    // --- イベントリスナー設定 ---
-    setApplicationState(appState); // eventManagerに状態オブジェクトへの参照を渡す
-    initializeEventListeners();    // eventManagerでリスナーを設定
+    // 7. イベントリスナー設定
+    setApplicationState(appState);
+    initializeEventListeners();
+    setupCustomEventListeners();
 
-    // --- アニメーションループ開始 ---
+    // 8. ウィンドウリサイズへの対応
+    window.addEventListener('resize', () => handleWindowResize(appState.camera, appState.renderer));
+
+    // 9. アニメーションループ開始
     animate();
 
-    console.log("Application initialized successfully.");
+    console.log("[Main] アプリケーションの初期化が完了しました。");
 }
 
 /**
- * アニメーションループ (フレームごとに実行)。
- * カメラコントロールの更新とシーンのレンダリングを行う。
+ * アニメーションループ。
  */
 function animate() {
-    // 次のフレームでの実行を要求
     requestAnimationFrame(animate);
+    appState.controls?.update();
+    if (appState.renderer && appState.scene && appState.camera) {
+        appState.renderer.render(appState.scene, appState.camera);
+    }
+}
 
-    // カメラコントロールを更新 (慣性など)
-    appState.controls.update();
+/**
+ * カスタムイベントリスナーを設定します。
+ */
+function setupCustomEventListeners() {
+    console.log("[Main] カスタムイベントリスナーを設定します...");
 
-    // シーンを描画
-    appState.renderer.render(appState.scene, appState.camera);
+    // 編集モード変更時
+    document.addEventListener('editmodechange', (event) => {
+        const { newMode } = event.detail; // oldMode も使える
+        console.log(`[Main][Event] 'editmodechange' 受信 - 新モード: ${newMode}`);
+        setRenderMode(newMode, appState.loadedBlocks, appState.scene);
+        if (newMode === EditMode.XML_EDIT) {
+            showXmlEditPanel();
+        } else {
+            hideXmlEditPanel();
+        }
+    });
+
+    // 選択状態変更時
+    document.addEventListener('selectionchanged', () => {
+        console.log("[Main][Event] 'selectionchanged' 受信");
+        if (getCurrentMode() === EditMode.XML_EDIT) {
+            updateXmlEditUI();
+        }
+        // TODO (Step 5): 範囲選択モードの場合、選択状態変更時に何かする必要があるか？
+        // (現状は selectionState 内でハイライトは完結)
+    });
+
+    // アンドゥ/リドゥ実行後
+    document.addEventListener('historyundone', handleHistoryChangeForUI);
+    document.addEventListener('historyredone', handleHistoryChangeForUI);
+
+    // ブロック変形完了後
+    document.addEventListener('blocktransformupdated', handleHistoryChangeForUI);
+
+    console.log("[Main] カスタムイベントリスナーの設定完了。");
+}
+
+/**
+ * 履歴変更/変形完了時のUI更新ハンドラ。
+ * @param {CustomEvent} event - イベントオブジェクト。
+ * @private
+ */
+function handleHistoryChangeForUI(event) {
+    console.log(`[Main] 履歴変更/変形完了 (${event.type}) を処理します。`);
+    if (getCurrentMode() === EditMode.XML_EDIT) {
+        updateXmlEditUI(); // XML編集UIを更新
+    }
+    // 必要に応じて他のUI更新
 }
 
 // --- アプリケーション開始 ---
