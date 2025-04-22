@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Stormworks Vehicle Editor (New UI)</title>
     <link rel="stylesheet" href="css/style.css">
-</head>
+    </head>
 <body>
     <canvas id="three-canvas"></canvas>
 
@@ -35,19 +35,24 @@
         <button class="toolbar-button" data-action="SYMMETRY_Z" title="Z軸対称"><span class="icon-text">Z</span></button>
         <hr style="width: 80%; border-color: #666; margin: 5px 0;">
         <label for="file-input-main" class="toolbar-button" title="読込" style="cursor: pointer;"><span class="icon-text">📂</span></label>
-        <input type="file" id="file-input-main" accept=".xml" style="display: none;"> <button class="toolbar-button" data-action="SAVE" title="保存"><span class="icon-text">💾</span></button>
+        <input type="file" id="file-input-main" accept=".xml" style="display: none;">
+        <button class="toolbar-button" data-action="SAVE" title="保存"><span class="icon-text">💾</span></button>
         <hr style="width: 80%; border-color: #666; margin: 5px 0;">
         <button id="fullscreen-button" class="toolbar-button" title="フルスクリーン切替"><span class="icon-text">⛶</span></button>
     </div>
 
     <div id="bottom-toolbar" class="toolbar">
-        <button class="hotbar-item active" data-block-id="01_block" title="ブロック"><span class="icon-text">🧱</span></button>
-        <button class="hotbar-item" data-block-id="02_wedge" title="ウェッジ"><span class="icon-text">◤</span></button>
+        <button class="hotbar-item active" data-block-id="01_block" title="Block"><span class="icon-text">🧱</span></button>
+        <button class="hotbar-item" data-block-id="02_wedge" title="Wedge"><span class="icon-text">◤</span></button>
+        <button class="hotbar-item" data-block-id="light" title="Light"><span class="icon-text">💡</span></button>
+        <button class="hotbar-item" data-block-id="button" title="Button"><span class="icon-text">🔘</span></button>
+        <button class="hotbar-item" data-block-id="seat_pilot" title="Pilot Seat"><span class="icon-text">💺</span></button>
         <div style="width: 1px; background-color: #666; margin: 0 5px; height: 30px;"></div>
         <button id="toggle-inventory-button" class="toolbar-button" title="インベントリ開閉"><span class="icon-text">🎒</span></button>
     </div>
 
     <div id="info-display">
+        <div>総ブロック数: <span id="info-block-count">--</span></div>
         <div>質量: <span id="info-mass">----</span> kg</div>
         <div>コスト: $<span id="info-cost">----</span></div>
         <table>
@@ -56,18 +61,12 @@
              <tr><td>Z:</td><td><span id="size-z">--</span> (<span id="size-z-m">--</span>m)</td></tr>
         </table>
         <div id="fps-display">FPS: --</div>
-        <button id="battery-save-button" class="toolbar-button fps-unlimited" title="FPS制限切替 (∞ > 60 > 30)">∞</button>
+        <button id="battery-save-button" class="toolbar-button fps-unlimited" title="FPS制限切替 (∞ > 60 > 30)" data-fps-mode="0">∞</button> <div id="file-operation-status" style="margin-top: 5px; max-height: 5em; overflow-y: auto;"></div>
     </div>
 
-    <div id="camera-stick">
-        <div id="stick-handle"></div>
-    </div>
-
-    <div id="xml-edit-panel" style="display: none;">
-        <h4>
+    <div id="xml-edit-panel" style="display: none;"> <h4>
             XML編集 (選択ブロック)
-            <button id="toggle-xml-panel" title="パネルを格納/展開">^</button>
-        </h4>
+            <button id="toggle-xml-panel" title="パネルを格納/展開">^</button> </h4>
         <div class="edit-section">
             <label>座標 (vp):</label>
             <div class="vector3-input">
@@ -84,13 +83,17 @@
                 <div><input type="number" step="1" id="edit-r-13" data-row="0" data-col="2" title="r[1,3]"><input type="number" step="1" id="edit-r-23" data-row="1" data-col="2" title="r[2,3]"><input type="number" step="1" id="edit-r-33" data-row="2" data-col="2" title="r[3,3]"></div>
             </div>
         </div>
-         <div id="xml-edit-info" class="info-text">ブロックを選択してください。</div>
+        <div id="xml-edit-info" class="info-text">ブロックを選択してください。</div>
     </div>
 
     <div id="inventory-panel">
         <input type="search" id="inventory-search" placeholder="ブロック名を検索...">
         <div class="inventory-content">
             </div>
+    </div>
+
+    <div id="camera-stick">
+        <div id="stick-handle"></div>
     </div>
 
     <div id="range-adjust-dpad">
@@ -110,5 +113,6 @@
     </script>
 
     <script type="module" src="js/main.js"></script>
+
 </body>
 </html>
