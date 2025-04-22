@@ -1,126 +1,127 @@
 /**
  * @fileoverview ブロックに対する主要な編集アクション（配置、削除）を実装します。
- * アンドゥ・リドゥのための履歴登録もここで行います。
+ * アンドゥ・リドゥのための履歴登録もここで行います (単一操作の場合)。
  */
 
 import * as THREE from 'three';
-import { getSelectedBlocks, clearSelection } from './selectionState.js'; // ← 修正: selectionState からインポート
-import { BlockData } from '../data/blockData.js';
-import { addAction } from '../state/historyManager.js';
-import { createBlockMesh } from '../rendering/blockRenderer.js';
+// ★ 修正: 状態や定義をインポート
+import { getSelectedBlocks, clearSelection } from './selectionState.js'; // 選択状態取得/クリア
+import { BlockData } from '../data/blockData.js';          // ブロックデータクラス
+import { getBlockDefinition } from '../data/blockDefinitions.js'; // ブロック定義取得
+import { addAction } from '../state/historyManager.js';   // 履歴登録
+import { createBlockMesh } from '../rendering/blockRenderer.js'; // メッシュ作成
 
 /**
  * 指定された位置と向きで新しいブロックをワークベンチに配置します。
- * 内部データ配列と3Dシーンの両方を更新し、操作履歴を登録します。
+ * loadedBlocks 配列と 3D シーンの両方を更新します。
+ * 複合操作 (ペーストなど) の一部として呼び出される場合は、内部での履歴登録を抑制できます。
  *
- * @param {THREE.Vector3} positionThreeJs - 配置する位置（Three.js座標系、整数座標）。
- * @param {THREE.Matrix4} orientationMatrix - 配置する向き（Three.js座標系、回転行列）。
- * @param {string} blockDefinitionId - 配置するブロックの種類ID (例: '01_block')。
+ * @param {THREE.Vector3} positionThreeJs - 配置位置 (Three.js 座標系、整数座標が期待される)。
+ * @param {THREE.Matrix4} orientationMatrix - 配置向き (Three.js 回転行列)。
+ * @param {string} blockDefinitionId - 配置するブロックの種類ID。
  * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (この配列が変更されます)。
  * @param {THREE.Scene} scene - 3Dシーンオブジェクト。
- * @param {boolean} [isHistoryAction=false] - この関数がアンドゥ/リドゥ操作によって呼び出されたかを示すフラグ。trueの場合、履歴には追加しない。
- * @returns {BlockData | null} 配置に成功した場合は新しく作成されたBlockDataインスタンス、失敗した場合はnull。
+ * @param {boolean} [isHistoryAction=false] - 履歴操作または複合操作の一部か。trueの場合、履歴登録しない。
+ * @returns {BlockData | null} 配置成功時は新しい BlockData インスタンス、失敗時は null。
  */
 export function placeBlock(positionThreeJs, orientationMatrix, blockDefinitionId, loadedBlocks, scene, isHistoryAction = false) {
     // --- 配置位置の重複チェック ---
-    // 指定された位置に既にブロックが存在しないかを確認
+    // 同じ整数座標にブロックが既に存在するか確認
     const isOccupied = loadedBlocks.some(block => block.position.equals(positionThreeJs));
     if (isOccupied) {
-        console.warn("配置しようとした位置は既に占有されています:", positionThreeJs);
+        console.warn(`[BlockActions] 配置しようとした位置 ${positionThreeJs.x},${positionThreeJs.y},${positionThreeJs.z} は既に占有されています。`);
         return null; // 配置失敗
     }
 
     // --- BlockDataインスタンスの作成 ---
-    // 配置位置(Three.js座標系)をXML座標系に戻す ({x, y, z} オブジェクト)
+    // 位置を XML 座標系に戻して BlockData コンストラクタに渡す
     const positionXml = {
         x: Math.round(positionThreeJs.x),
         y: Math.round(positionThreeJs.y),
-        z: Math.round(-positionThreeJs.z) // Z座標の符号を反転
+        z: Math.round(-positionThreeJs.z) // Z反転
     };
-
-    // 新しいブロックデータを作成
-    // 第3引数の rotationString はnull、第5引数で初期向きのMatrix4を渡す
+    // ★ BlockData コンストラクタ呼び出し時に初期 Matrix も渡す
     const newBlock = new BlockData(
         blockDefinitionId,
-        positionXml, // XML座標系で渡す
-        null,        // 回転行列文字列は不要
-        "0",         // デフォルトの色情報（ペイント未実装のため）
-        orientationMatrix // 初期向き（Three.js座標系）
+        positionXml,
+        null, // rotationString は Matrix で指定するため不要
+        "0",  // デフォルト色
+        orientationMatrix // 初期向き Matrix4
     );
 
     // --- 内部データ配列の更新 ---
     loadedBlocks.push(newBlock);
 
     // --- 3Dシーンへのメッシュ追加 ---
-    // ブロック定義に応じたメッシュを作成 (blockRendererの関数を使用)
-    const mesh = createBlockMesh(newBlock);
-
-    // メッシュの位置と向きをBlockDataから設定
-    // (createBlockMesh内では設定されないため、ここで設定)
-    mesh.position.copy(newBlock.position);       // 位置 (Three.js座標系)
-    mesh.matrix.copy(newBlock.rotationMatrix);  // 回転/スケール/せん断 (Three.js座標系)
-    mesh.matrix.setPosition(newBlock.position); // 行列にも位置情報を反映
-    mesh.matrixWorldNeedsUpdate = true;         // ワールド行列の更新を強制
-
-    // 作成したメッシュをシーンに追加
-    scene.add(mesh);
-    // 作成したメッシュへの参照をBlockDataに保持
-    newBlock.mesh = mesh;
-
-    console.log(`Block placed: ID ${newBlock.id}, Def: ${newBlock.definitionId} at (Three.js) ${positionThreeJs.x},${positionThreeJs.y},${positionThreeJs.z}`);
-
-    // --- アンドゥ履歴の登録 ---
-    // アンドゥ/リドゥ操作による呼び出しでない場合のみ履歴に追加
-    if (!isHistoryAction) {
-        addAction({
-            type: 'ADD_BLOCK',   // アクションタイプ
-            blockData: newBlock // 配置したブロックのデータ全体を保持
-        });
+    const mesh = createBlockMesh(newBlock); // 対応するメッシュを作成
+    if (mesh) {
+        newBlock.mesh = mesh;           // BlockData にメッシュ参照を保持
+        scene.add(mesh);                // シーンに追加
+        newBlock.updateMeshMatrix();    // メッシュの位置・向きを BlockData に合わせる
+        console.log(`[BlockActions] ブロック配置完了: ID ${newBlock.id}, Def: ${newBlock.definitionId}`);
+    } else {
+        console.error(`[BlockActions] ブロック ID ${newBlock.id} のメッシュ作成に失敗しました。`);
+        // メッシュ作成失敗時のエラー処理 (例: 追加したBlockDataを削除)
+        const index = loadedBlocks.findIndex(b => b.id === newBlock.id);
+        if (index > -1) loadedBlocks.splice(index, 1);
+        return null; // 配置失敗
     }
 
-    return newBlock; // 配置成功、新しいBlockDataを返す
+    // --- アンドゥ履歴の登録 ---
+    if (!isHistoryAction) {
+        // 履歴には BlockData の基本情報をコピーして保存 (メッシュ参照は含めない)
+        const addedBlockDataCopy = {
+            id: newBlock.id,
+            definitionId: newBlock.definitionId,
+            position: newBlock.position.clone(),
+            rotationMatrix: newBlock.rotationMatrix.clone(),
+            colorIndices: [...newBlock.colorIndices],
+            mesh: null, foregroundMesh: null
+        };
+        addAction({
+            type: 'ADD_BLOCK',
+            blockData: addedBlockDataCopy
+        });
+        console.log("[BlockActions] アンドゥ履歴 'ADD_BLOCK' を登録しました。");
+    }
+
+    return newBlock; // 配置成功
 }
 
 
 /**
  * 指定されたBlockDataオブジェクトをワークベンチから削除します。
- * 内部データ配列と3Dシーンの両方から削除し、操作履歴を登録します。
+ * loadedBlocks 配列と 3D シーンの両方から削除します。
+ * 複合操作 (カットなど) の一部として呼び出される場合は、内部での履歴登録を抑制できます。
  *
  * @param {BlockData} blockDataToDelete - 削除対象のブロックデータ。
- * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (この配列が変更されます)。
+ * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (変更対象)。
  * @param {THREE.Scene} scene - 3Dシーンオブジェクト。
- * @param {boolean} [isHistoryAction=false] - この関数がアンドゥ/リドゥ操作によって呼び出されたかを示すフラグ。trueの場合、履歴には追加しない。
- * @returns {boolean} 削除が成功した場合はtrue、失敗した場合はfalse。
+ * @param {boolean} [isHistoryAction=false] - 履歴操作または複合操作の一部か。trueの場合、履歴登録しない。
+ * @returns {boolean} 削除が成功した場合はtrue。
  */
 export function deleteBlock(blockDataToDelete, loadedBlocks, scene, isHistoryAction = false) {
-    // 削除対象のデータが存在するかチェック
     if (!blockDataToDelete) {
-        console.warn("削除対象のブロックが指定されていません。");
+        console.warn("[BlockActions] 削除対象のブロックが指定されていません。");
         return false;
     }
 
     // --- アンドゥ履歴の登録 ---
-    // アンドゥ/リドゥ操作による呼び出しでない場合のみ履歴に追加
-    // 削除を実行する前に、元に戻せるように削除対象のデータを保存する
+    let deletedBlockDataCopy = null;
     if (!isHistoryAction) {
-        // 注意: blockDataToDeleteを直接保持すると、後で変更される可能性があるため、
-        //       必要な情報をコピーするか、シリアライズ可能な形式で保持するのが望ましい。
-        //       今回は、mesh参照を除いた簡易コピーを保持する。
-        //       undo時にはこの情報を使ってBlockDataを（必要なら）再生成する。
-        const deletedBlockDataCopy = {
-             // BlockDataのプロパティをコピー
+        deletedBlockDataCopy = {
              id: blockDataToDelete.id,
              definitionId: blockDataToDelete.definitionId,
-             position: blockDataToDelete.position.clone(), // Vector3はクローン
-             rotationMatrix: blockDataToDelete.rotationMatrix.clone(), // Matrix4はクローン
-             colorIndices: [...blockDataToDelete.colorIndices], // 配列はコピー
-             mesh: null // メッシュへの参照は含めない
-             // 必要に応じて他のプロパティもコピー
+             position: blockDataToDelete.position.clone(),
+             rotationMatrix: blockDataToDelete.rotationMatrix.clone(),
+             colorIndices: [...blockDataToDelete.colorIndices],
+             mesh: null, foregroundMesh: null
          };
         addAction({
-            type: 'DELETE_BLOCK',       // アクションタイプ
-            blockData: deletedBlockDataCopy // 削除したブロックの情報
+            type: 'DELETE_BLOCK',
+            blockData: deletedBlockDataCopy
         });
+         console.log("[BlockActions] アンドゥ履歴 'DELETE_BLOCK' を登録しました。");
     }
 
     // --- 内部データ配列から削除 ---
@@ -128,43 +129,45 @@ export function deleteBlock(blockDataToDelete, loadedBlocks, scene, isHistoryAct
     if (index !== -1) {
         loadedBlocks.splice(index, 1); // 配列から削除
     } else {
-        // 配列内に見つからない場合も、シーンからの削除は試みる (エラーリカバリ)
-        console.warn(`削除対象のブロック (ID: ${blockDataToDelete.id}) が loadedBlocks 配列内に見つかりません。`);
+        console.warn(`[BlockActions] 削除対象のブロック (ID: ${blockDataToDelete.id}) が loadedBlocks 配列内に見つかりません。`);
     }
 
     // --- 3Dシーンからメッシュを削除 & リソース解放 ---
-    if (blockDataToDelete.mesh) {
-        const mesh = blockDataToDelete.mesh;
-        scene.remove(mesh); // シーンから削除
+    const meshToRemove = blockDataToDelete.mesh;
+    const fgMeshToRemove = blockDataToDelete.foregroundMesh;
 
-        // メッシュが使用していたジオメトリとマテリアルを破棄(dispose)
-        // ジオメトリはキャッシュ管理されているので、ここでは破棄しない
-        // if (mesh.geometry) mesh.geometry.dispose();
-        // マテリアルは個別にクローンされているので破棄する
-        if (mesh.material) {
-            if (!Array.isArray(mesh.material)) {
-                mesh.material.dispose();
-            } else {
-                // 万が一マテリアルが配列の場合
-                mesh.material.forEach(m => m.dispose());
+    // 通常メッシュの削除
+    if (meshToRemove && meshToRemove.parent) {
+        scene.remove(meshToRemove);
+        if (meshToRemove.material && typeof meshToRemove.material.dispose === 'function') {
+            const matName = meshToRemove.material.name || '';
+            // クローンされたマテリアルのみ破棄 (ベースや共有マテリアルは除く)
+            if(matName !== 'unknownMaterial' && !matName.includes('Base') && !matName.includes('ghost')) {
+                 // console.log(`[BlockActions] Disposing material for mesh ID ${blockDataToDelete.id}`);
+                 // meshToRemove.material.dispose(); // メモリリークの可能性があるので一旦コメントアウト解除を検討
             }
         }
-        console.log(`Block mesh (ID: ${blockDataToDelete.id}) removed and material disposed.`);
-        // 削除後、BlockDataに残っているmesh参照をクリアする (任意だが推奨)
         blockDataToDelete.mesh = null;
-    } else {
-        console.warn(`削除対象のブロック (ID: ${blockDataToDelete.id}) に対応するメッシュが見つかりません。`);
+    }
+    // 前景メッシュの削除
+    if (fgMeshToRemove && fgMeshToRemove.parent) {
+        scene.remove(fgMeshToRemove);
+        if (fgMeshToRemove.material && typeof fgMeshToRemove.material.dispose === 'function') {
+            // 前景マテリアルはクローンされているはずなので破棄
+            fgMeshToRemove.material.dispose();
+        }
+        blockDataToDelete.foregroundMesh = null;
     }
 
     // --- 選択状態の解除 ---
-    // 削除したブロックが選択されていた場合、選択をクリアする
-    if (getSelectedBlocks()?.id === blockDataToDelete.id) {
-        clearSelection(); // selectionHandlerの関数を呼び出す
+    // 削除ブロックが選択されていたら選択解除 (現状は全解除)
+    const currentSelection = getSelectedBlocks();
+    if (currentSelection.some(b => b.id === blockDataToDelete.id)) {
+        console.warn("[BlockActions] 削除されたブロックが選択されていました。選択をクリアします。");
+        clearSelection(); // 全選択解除
+        // 個別解除が必要な場合は selectionState にメソッド追加が必要
     }
-    // 複数選択の場合も考慮するなら、選択リストから削除する処理が必要だが、
-    // clearSelection() は全解除なので、現状はこれで問題ない。
-    // 将来的に選択中のブロックを個別に削除できるようにする場合は要調整。
 
-    console.log(`Block (ID: ${blockDataToDelete.id}, Def: ${blockDataToDelete.definitionId}) deleted.`);
+    console.log(`[BlockActions] ブロック削除完了: ID ${blockDataToDelete.id}, Def: ${blockDataToDelete.definitionId}`);
     return true; // 削除成功
 }
