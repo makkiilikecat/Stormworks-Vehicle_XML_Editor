@@ -1,172 +1,130 @@
 /**
- * @fileoverview 新しいUI要素の基本的なインタラクション（トグル表示、フルスクリーン、FPS制限など）を管理します。
+ * @fileoverview 新しいUI要素の基本的なインタラクション（トグル表示、モード切替など）を管理します。
  * 主に main.js から初期化され、各UI要素にイベントリスナーを設定します。
- * @version 1.1 (Stage 2.3 FPSリミッター連携追加)
  */
 
-// main.js からFPS制限設定関数をインポート
-import { setFpsLimitMode } from '../main.js';
-// cameraStickHandler からスティック表示状態設定関数をインポート
-import { setStickVisibility } from '../interactions/cameraStickHandler.js';
+// --- 状態管理と関連モジュールのインポート ---
+import { setFpsLimitMode } from '../main.js'; // mainからFPS設定関数をインポート
+import { setStickVisibility } from '../interactions/cameraStickHandler.js'; // スティック表示状態設定関数
+import { setEditMode, EditMode } from '../state/editMode.js'; // 編集モード設定関数とモード定義
+import { updateModeIndicator } from './modeIndicator.js'; // モード表示更新関数
 
 // --- モジュール内変数 ---
 
-/**
- * アプリケーション状態オブジェクトへの参照。
- * OrbitControls などにアクセスするために保持します。
- * @type {object | null}
- */
+/** @type {object | null} アプリケーション状態への参照 (OrbitControls などにアクセスするため) */
 let appState = null;
-
-/**
- * インベントリパネルが表示されているかどうかを示すフラグ。
- * @type {boolean}
- */
+/** @type {boolean} インベントリパネルが表示されているか */
 let inventoryVisible = false;
-
-/**
- * XML編集パネルが格納されている（折りたたまれている）かどうかを示すフラグ。
- * @type {boolean}
- */
+/** @type {boolean} XML編集パネルが格納されているか */
 let xmlPanelCollapsed = false;
-
-/**
- * カメラ移動スティックが表示されているかどうかを示すフラグ。
- * @type {boolean}
- */
+/** @type {boolean} カメラ移動スティックが表示されているか */
 let stickVisible = true; // 初期状態は表示
+/** @type {number} 現在のFPS制限モード (0: Unlimited, 1: 60fps, 2: 30fps) */
+let currentFpsLimitMode = 0;
 
-/**
- * 現在のFPS制限モード。
- * 0: 無制限 (∞)
- * 1: 60 FPS
- * 2: 30 FPS
- * @type {number}
- */
-let currentFpsLimitMode = 0; // 初期状態は無制限
-
-// --- DOM要素キャッシュ ---
-// initializeUIInteractions 関数内で初期化されます。
-/** @type {HTMLButtonElement | null} スティック表示切替ボタン */
+// --- DOM要素キャッシュ (初期化時に設定) ---
 let toggleStickButton = null;
-/** @type {HTMLElement | null} カメラ移動スティック要素 */
 let cameraStick = null;
-/** @type {HTMLButtonElement | null} フルスクリーン切替ボタン */
 let fullscreenButton = null;
-/** @type {HTMLButtonElement | null} XMLパネル格納ボタン */
 let toggleXmlPanelButton = null;
-/** @type {HTMLElement | null} XML編集パネル要素 */
 let xmlEditPanel = null;
-/** @type {HTMLButtonElement | null} インベントリ開閉ボタン */
 let toggleInventoryButton = null;
-/** @type {HTMLElement | null} インベントリパネル要素 */
 let inventoryPanel = null;
-/** @type {HTMLElement | null} インベントリ背景オーバーレイ要素 */
 let inventoryOverlay = null;
-/** @type {HTMLElement | null} 下部ツールバー要素 */
 let bottomToolbar = null;
-/** @type {HTMLButtonElement | null} バッテリーセーブ（FPS制限）ボタン */
 let batterySaveButton = null;
+/** @type {NodeListOf<HTMLButtonElement> | null} モード切替ボタンのコレクション */
+let modeButtons = null;
 
-// --- UI操作関数 ---
+// --- 関数 ---
 
 /**
- * フルスクリーンモードの有効/無効を切り替えます。
+ * フルスクリーンモードを切り替えます。
+ * ブラウザのFullscreen APIを使用します。
  * @private
  */
 function toggleFullScreen() {
-    // 現在フルスクリーンでない場合
+    // 現在フルスクリーン表示でない場合
     if (!document.fullscreenElement) {
-        // ドキュメントのルート要素でフルスクリーンを要求
-        document.documentElement.requestFullscreen()
-            .then(() => console.log("[UI] フルスクリーン有効化"))
-            .catch(err => {
-                // 失敗した場合、ユーザーに通知
-                console.error(`フルスクリーンモードエラー: ${err.message} (${err.name})`);
-                alert(`フルスクリーンモードにできませんでした。\n(${err.message})`);
-            });
+        // フルスクリーン表示をリクエスト
+        document.documentElement.requestFullscreen().catch(err => {
+            // 失敗した場合のエラーハンドリング
+            console.error(`フルスクリーンモードエラー: ${err.message} (${err.name})`);
+            alert(`フルスクリーンモードにできませんでした。`); // ユーザーに通知
+        });
+        console.log("[UI] フルスクリーン有効化");
     } else {
-        // 現在フルスクリーン状態の場合
+        // 現在フルスクリーン表示の場合、解除する
         if (document.exitFullscreen) {
-            document.exitFullscreen()
-                .then(() => console.log("[UI] フルスクリーン解除"))
-                .catch(err => console.error(`フルスクリーン解除エラー: ${err.message} (${err.name})`));
+            document.exitFullscreen();
+            console.log("[UI] フルスクリーン解除");
         }
     }
 }
 
 /**
  * カメラ移動スティックの表示/非表示を切り替えます。
- * 同時にスティック制御モジュールにも状態を通知します。
+ * 対応するボタンのアクティブ状態も更新します。
  * @private
  */
 function toggleStickVisibility() {
-     stickVisible = !stickVisible; // 状態を反転
-     // CSSクラスを付け外しして表示を切り替え
-     cameraStick?.classList.toggle('hidden', !stickVisible);
-     // ボタンのアクティブ状態も切り替え
-     toggleStickButton?.classList.toggle('active', stickVisible);
-     // cameraStickHandler モジュールに表示状態を通知
-     setStickVisibility(stickVisible);
+     stickVisible = !stickVisible; // 表示状態を反転
+     cameraStick?.classList.toggle('hidden', !stickVisible); // CSSクラスで表示/非表示
+     toggleStickButton?.classList.toggle('active', stickVisible); // ボタンのアクティブ状態更新
+     setStickVisibility(stickVisible); // cameraStickHandlerにも状態を通知
      console.log(`[UI] カメラ移動スティック表示: ${stickVisible}`);
-     // 注意: 非表示時にスティック操作中だった場合の中断処理は setStickVisibility 内で行われる想定
+     // 注意: スティック非表示時に操作中だった場合の中断処理は setStickVisibility (cameraStickHandler内) で行う想定
 }
 
 /**
  * XML編集パネルの格納/展開状態を切り替えます。
+ * CSSクラス 'collapsed' を付け外しすることで実現します。
  * @private
  */
 function toggleXmlPanel() {
-     xmlPanelCollapsed = !xmlPanelCollapsed; // 状態反転
-     // CSSクラスを付け外ししてスタイルを切り替え (高さやpaddingのアニメーション)
-     xmlEditPanel?.classList.toggle('collapsed', xmlPanelCollapsed);
+     xmlPanelCollapsed = !xmlPanelCollapsed; // 格納状態を反転
+     xmlEditPanel?.classList.toggle('collapsed', xmlPanelCollapsed); // CSSクラスをトグル
      console.log(`[UI] XMLパネル ${xmlPanelCollapsed ? '格納' : '展開'}`);
  }
 
 /**
- * インベントリパネルと背景オーバーレイの表示/非表示を切り替えます。
- * 下部ツールバーの位置も調整し、カメラコントロールの有効/無効も制御します。
- * @param {boolean | null} [forceState=null] - 強制的に設定する状態 (true:表示, false:非表示)。nullの場合は現在の状態を反転。
+ * インベントリパネルの表示/非表示を切り替えます。
+ * オーバーレイ表示、下部ツールバーの位置調整、カメラコントロールの有効/無効も連動します。
+ * @param {boolean | null} [forceState=null] - 特定の状態に強制する場合 (true:表示, false:非表示)。nullの場合はトグル。
  * @private
  */
 function toggleInventory(forceState = null) {
-    // 目標とする表示状態を決定
     const shouldBeVisible = forceState !== null ? forceState : !inventoryVisible;
-    // 状態が変わらない場合は何もしない
+    // 現在の状態と同じなら何もしない
     if (shouldBeVisible === inventoryVisible) return;
 
-    // 各要素のCSSクラスを付け外しして表示状態を変更
+    // 各要素の表示状態を更新
     inventoryPanel?.classList.toggle('visible', shouldBeVisible);
     inventoryOverlay?.classList.toggle('visible', shouldBeVisible);
-    bottomToolbar?.classList.toggle('lowered', shouldBeVisible); // 下部ツールバーを上下させる
-
-    // 内部の状態を更新
-    inventoryVisible = shouldBeVisible;
+    bottomToolbar?.classList.toggle('lowered', shouldBeVisible);
+    inventoryVisible = shouldBeVisible; // 状態を更新
     console.log(`[UI] インベントリ表示: ${inventoryVisible}`);
 
-    // カメラコントロールの有効/無効を切り替え
+    // インベントリ表示中はカメラコントロールを無効化 (スティック操作も考慮が必要だが、一旦無視)
     if (appState?.controls) {
-         const isStickDragging = false; // TODO: スティック操作状態を取得する手段が必要
+         const isStickDragging = false; // TODO: cameraStickHandler からドラッグ状態を取得する
          appState.controls.enabled = !inventoryVisible && !isStickDragging;
-         console.log(`[UI] OrbitControls ${appState.controls.enabled ? '有効' : '無効'}`);
     }
 }
 
 
 /**
- * FPS制限モードを順次（無制限→60→30→無制限）切り替えます。
- * ボタンの表示を更新し、main.jsに制限モードを通知します。
+ * FPS制限モードを順次切り替え (∞ -> 60 -> 30 -> ∞)。
+ * ボタンの表示を更新し、main.jsに通知します。
  * @private
  */
 function cycleFpsLimit() {
-    // モードを 0, 1, 2 の順でループさせる
-    currentFpsLimitMode = (currentFpsLimitMode + 1) % 3;
+    currentFpsLimitMode = (currentFpsLimitMode + 1) % 3; // モードを循環
+    let buttonText = '∞';
+    let buttonClass = 'fps-unlimited';
+    let buttonActive = false;
 
-    let buttonText = '∞'; // ボタンのテキスト
-    let buttonClass = 'fps-unlimited'; // ボタンに適用するCSSクラス
-    let buttonActive = false; // ボタンをアクティブ表示にするか
-
-    // 新しいモードに応じてテキストとクラスを設定
+    // モードに応じて表示テキストとCSSクラスを設定
     switch (currentFpsLimitMode) {
         case 1: // 60 FPS
             buttonText = '60'; buttonClass = 'fps-60'; buttonActive = true; break;
@@ -175,38 +133,76 @@ function cycleFpsLimit() {
         // case 0: はデフォルト値を使用
     }
 
-    // main.js の FPS 制限ロジックに新しいモードを通知
+    // main.js のFPS制限設定関数を呼び出す
     setFpsLimitMode(currentFpsLimitMode);
 
-    // ボタンの表示を更新
+    // ボタンの見た目を更新
     if (batterySaveButton) {
         batterySaveButton.textContent = buttonText;
-        // クラス名を一度リセットしてから新しいクラスを設定
-        batterySaveButton.className = `toolbar-button ${buttonClass}`;
-        // 制限がかかっているモードでは 'active' クラスを追加
-        batterySaveButton.classList.toggle('active', buttonActive);
+        batterySaveButton.className = `toolbar-button ${buttonClass}`; // 基本クラス + モードクラス
+        batterySaveButton.classList.toggle('active', buttonActive); // 制限中は active スタイル適用
     }
     console.log(`[UI] FPS制限モード変更: ${currentFpsLimitMode} (${buttonText} FPS)`);
+}
+
+
+/**
+ * ★追加: 編集モード変更時にUI要素の状態（アクティブボタン、パネル表示など）を更新する関数。
+ * main.jsのeditmodechangeイベントリスナーから呼び出されることを想定しています。
+ * @param {EditMode} newMode - 新しく設定された編集モード。
+ */
+export function handleModeChangeUI(newMode) {
+    console.log(`[UI] モード変更に伴うUI更新実行 -> ${newMode}`);
+
+    // 1. 左ツールバーのモードボタンのアクティブ状態を更新
+    //   - 現在のモードに一致する data-mode を持つボタンに 'active' クラスを付与
+    //   - 他のボタンからは 'active' クラスを削除
+    modeButtons?.forEach(button => {
+        button.classList.toggle('active', button.dataset.mode === newMode);
+    });
+
+    // 2. 画面右上のモードインジケータのテキストを更新
+    updateModeIndicator(newMode);
+
+    // 3. XML編集パネルの表示/非表示と展開状態を制御
+    const isXmlEditVisible = (newMode === EditMode.XML_EDIT);
+    if (xmlEditPanel) {
+        xmlEditPanel.style.display = isXmlEditVisible ? 'block' : 'none';
+        // XML編集モードになったら、強制的にパネルを展開状態に戻す (collapsedクラスを削除)
+        if (isXmlEditVisible && xmlPanelCollapsed) {
+            toggleXmlPanel(); // 内部で collapsed クラスが外れ、状態変数も更新される
+        }
+    }
+
+    // 4. 範囲選択モード専用UI（右ツールバーの一部ボタン、十字キー）の表示/非表示
+    const isRangeSelectVisible = (newMode === EditMode.RANGE_SELECT);
+    // '.range-only' クラスを持つ要素（ボタンや区切り線）の表示を切り替え
+    document.querySelectorAll('.range-only').forEach(el => {
+        // ボタン類は 'flex', 区切り線(HR)は 'block' で表示、それ以外は 'none'
+        el.style.display = isRangeSelectVisible ? (el.tagName === 'HR' ? 'block' : 'flex') : 'none';
+    });
+    // 十字キーの表示を切り替え
+    const rangeDpad = document.getElementById('range-adjust-dpad');
+    if (rangeDpad) {
+        rangeDpad.style.display = isRangeSelectVisible ? 'grid' : 'none';
+    }
+
+    // TODO: 必要に応じて他のモード依存UIの表示制御を追加
+    // 例: ペイントモード用のカラーパレットなど
 }
 
 
 // --- 初期化関数 ---
 
 /**
- * このモジュールで扱うUI要素のイベントリスナーを設定し、初期状態を適用します。
- * main.js の init 関数から呼び出されます。
+ * このモジュールで扱うUI要素への参照を取得し、イベントリスナーを設定します。
  * @param {object} appStateRefParam - アプリケーション状態オブジェクトへの参照。
  */
 export function initializeUIInteractions(appStateRefParam) {
     console.log("[UI] UIインタラクション初期化中...");
-    // アプリケーション状態への参照を保持
-    appState = appStateRefParam;
-    if(!appState) {
-        console.error("[UI] 初期化エラー: appState が無効です。");
-        return;
-    }
+    appState = appStateRefParam; // appState への参照を保持
 
-    // --- DOM要素を取得し、モジュール内変数にキャッシュ ---
+    // --- DOM要素を取得 ---
     toggleStickButton = document.getElementById('toggle-stick-button');
     cameraStick = document.getElementById('camera-stick');
     fullscreenButton = document.getElementById('fullscreen-button');
@@ -217,28 +213,41 @@ export function initializeUIInteractions(appStateRefParam) {
     inventoryOverlay = document.getElementById('inventory-overlay');
     bottomToolbar = document.getElementById('bottom-toolbar');
     batterySaveButton = document.getElementById('battery-save-button');
+    // モードボタン群を取得
+    modeButtons = document.querySelectorAll('#left-toolbar .mode-button');
 
-    // --- 各ボタンにクリックイベントリスナーを設定 ---
+    // --- イベントリスナー設定 ---
     fullscreenButton?.addEventListener('click', toggleFullScreen);
     toggleStickButton?.addEventListener('click', toggleStickVisibility);
     toggleXmlPanelButton?.addEventListener('click', toggleXmlPanel);
     toggleInventoryButton?.addEventListener('click', () => toggleInventory());
-    inventoryOverlay?.addEventListener('click', () => toggleInventory(false));
+    inventoryOverlay?.addEventListener('click', () => toggleInventory(false)); // オーバーレイクリックで閉じる
     batterySaveButton?.addEventListener('click', cycleFpsLimit);
 
-    // --- UI要素の初期状態を設定 ---
-    // スティック表示状態
-    if (cameraStick) cameraStick.classList.toggle('hidden', !stickVisible);
-    if (toggleStickButton) toggleStickButton.classList.toggle('active', stickVisible);
-    // XMLパネル格納状態
-    if (xmlEditPanel) xmlEditPanel.classList.toggle('collapsed', xmlPanelCollapsed);
+    // ★追加: モードボタンにクリックリスナーを設定
+    modeButtons?.forEach(button => {
+        button.addEventListener('click', () => {
+            const modeToSet = button.dataset.mode; // data-mode属性からモード名を取得
+            if (modeToSet && Object.values(EditMode).includes(modeToSet)) {
+                // editMode.js の setEditMode を呼び出してアプリケーションの状態を変更
+                setEditMode(modeToSet);
+                // UIの更新は 'editmodechange' イベントリスナー (main.js またはこのファイル内で設定) に任せる
+            } else {
+                console.warn(`[UI] 無効なモードがボタンに設定されています: ${modeToSet}`);
+            }
+        });
+    });
+
+    // --- 初期状態設定 ---
+    cameraStick?.classList.toggle('hidden', !stickVisible);
+    toggleStickButton?.classList.toggle('active', stickVisible);
+    xmlEditPanel?.classList.toggle('collapsed', xmlPanelCollapsed);
     // FPSボタン初期表示
-    if (batterySaveButton) {
+    if(batterySaveButton){
          batterySaveButton.textContent = '∞';
          batterySaveButton.className = 'toolbar-button fps-unlimited';
-         // 必要なら currentFpsLimitMode の初期値に応じて active クラスも設定
     }
-    // インベントリはCSSで初期非表示になっている想定
+    // handleModeChangeUI(getCurrentMode()); // 初期モードのUI反映はmain.jsのinitで行う
 
     console.log("[UI] UIインタラクション初期化完了。");
 }
