@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Stormworks Editor UI サンプル</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        /* 基本的なページとレイアウト */
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #282c34; /* 少し濃い背景 */ color: #ddd; display: flex; flex-direction: column; height: 100vh; }
+        #main-container { display: flex; flex: 1; position: relative; overflow: hidden; /* パネルがはみ出ないように */ }
+        #viewport { flex: 1; position: relative; background-color: #333; /* ビューポート背景 */ }
+        #canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 0; }
+
+        /* UIパネル共通スタイル */
+        .ui-panel { background: rgba(45, 50, 60, 0.9); padding: 12px; border-radius: 6px; border: 1px solid #444; position: absolute; z-index: 1; display: flex; flex-direction: column; gap: 10px; font-size: 14px; /* 少し大きめ */ box-shadow: 0 2px 5px rgba(0,0,0,0.3); overflow-y: auto; /* パネル内スクロール */ }
+        .ui-panel h4 { margin-top: 0; margin-bottom: 10px; color: #88aaff; border-bottom: 1px solid #555; padding-bottom: 6px; font-size: 1.1em; }
+        .ui-panel label { display: block; margin-bottom: 4px; font-weight: bold; font-size: 0.9em; color: #bbb; }
+
+        /* ボタン・選択肢スタイル */
+        button, select { padding: 8px 12px; /* タッチしやすいように少し大きめ */ cursor: pointer; background-color: #4a5060; color: #ddd; border: 1px solid #666; border-radius: 4px; transition: background-color 0.2s; font-size: inherit; }
+        button:hover:not(:disabled) { background-color: #5a6070; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button i { margin-right: 6px; } /* アイコンとテキストの間隔 */
+        select { appearance: none; background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23BBB%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right 10px top 50%; background-size: .65em auto; padding-right: 30px; }
+        input[type="number"] { width: 70px; /* 少し広め */ background-color: #2a2a30; color: #eee; border: 1px solid #555; border-radius: 3px; padding: 6px; font-family: monospace; text-align: right; }
+
+        /* パネル配置 */
+        #header-toolbar { background: rgba(30, 35, 45, 0.95); padding: 8px 15px; display: flex; align-items: center; gap: 12px; z-index: 2; border-bottom: 1px solid #444; }
+        #left-panel { top: 10px; bottom: 10px; left: 10px; width: 200px; max-height: calc(100% - 20px); }
+        #right-panel { top: 10px; bottom: 10px; right: 10px; width: 300px; max-height: calc(100% - 20px); }
+        #footer-toolbar { background: rgba(30, 35, 45, 0.95); padding: 8px 15px; display: flex; justify-content: space-between; align-items: center; gap: 10px; z-index: 2; border-top: 1px solid #444; }
+        #footer-toolbar > div { display: flex; gap: 8px; align-items: center; }
+
+        /* 各UI要素の詳細スタイル */
+        #file-status { font-size: 0.9em; color: #aaa; margin-left: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+        #mode-select { min-width: 120px; }
+        #range-mode-controls button, #clipboard-transform-controls button { padding: 6px 10px; } /* アイコンボタンは少し小さく */
+
+        #inventory-list { max-height: 250px; overflow-y: auto; border: 1px solid #444; padding: 5px; margin-bottom: 10px; background: #2f3440; }
+        .inventory-item { padding: 5px 8px; cursor: pointer; border-bottom: 1px solid #444; }
+        .inventory-item:last-child { border-bottom: none; }
+        .inventory-item:hover { background-color: #4a5060; }
+        #current-block { font-style: italic; color: #aaa; margin-top: 5px; }
+        .button-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+        .button-group button { flex: 1 1 45%; /* 2列になるように */ text-align: center; }
+
+        #xml-edit-panel { /* 必要に応じてスタイル追加 */ }
+        .vector3-input { display: grid; grid-template-columns: 15px 1fr; gap: 5px 8px; align-items: center; }
+        .matrix3x3-input { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+        .matrix3x3-input div { display: flex; flex-direction: column; gap: 5px; }
+        #info-panel ul { padding-left: 20px; margin: 5px 0 0 0; font-size: 0.9em; color: #ccc; }
+        #info-panel li { margin-bottom: 3px; }
+
+        #status-coords { font-family: monospace; color: #aaa; }
+        #status-message { color: #aaa; font-size: 0.9em; }
+
+        /* タブレット縦向きなど狭い場合 (例) */
+        @media (max-width: 768px) {
+            #left-panel, #right-panel { display: none; /* 狭い画面ではサイドパネルを隠す (ボタンで表示切替が必要) */ }
+            #header-toolbar, #footer-toolbar { flex-wrap: wrap; padding: 5px 10px; gap: 5px; }
+            #file-status { max-width: 100px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="header-toolbar">
+        <button id="load-button" title="ビークルXMLファイルを読み込み"><i class="fas fa-folder-open"></i> 読込</button>
+        <input type="file" id="file-input" accept=".xml" style="display: none;">
+        <button id="save-button" title="編集内容をXMLファイルとして保存"><i class="fas fa-save"></i> 保存</button>
+        <span id="file-status">ファイル未選択</span>
+        <span style="flex-grow: 1;"></span> <button id="undo-button" title="元に戻す (Ctrl+Z)"><i class="fas fa-undo"></i></button>
+        <button id="redo-button" title="やり直し (Ctrl+Y)"><i class="fas fa-redo"></i></button>
+        <select id="mode-select" title="編集モード切替">
+            <option value="NORMAL">配置</option>
+            <option value="DELETE">削除</option>
+            <option value="XML_EDIT">XML編集</option>
+            <option value="RANGE_SELECT" selected>範囲選択</option>
+            <option value="PAINT">ペイント</option>
+        </select>
+        <div id="range-mode-controls" style="display: flex; gap: 5px;">
+             <button id="copy-button" title="コピー (Ctrl+C)"><i class="fas fa-copy"></i></button>
+             <button id="cut-button" title="カット (Ctrl+X)"><i class="fas fa-cut"></i></button>
+             <button id="paste-button" title="ペースト (Ctrl+V)"><i class="fas fa-paste"></i></button>
+             <button id="clear-clipboard-button" title="クリップボードクリア (Shift+Q)"><i class="fas fa-times-circle"></i></button>
+        </div>
+    </div>
+
+    <div id="main-container">
+        <div id="viewport">
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div id="left-panel" class="ui-panel">
+            <h4><i class="fas fa-cubes"></i> ブロック選択</h4>
+            <div id="inventory-list">
+                <div class="inventory-item" data-block-id="01_block">基本ブロック</div>
+                <div class="inventory-item" data-block-id="02_wedge">ウェッジ</div>
+                <div class="inventory-item" data-block-id="05_wedge_2">ウェッジ 1x2</div>
+                <div class="inventory-item" data-block-id="08_wedge_4">ウェッジ 1x4</div>
+                <div class="inventory-item" data-block-id="03_pyramid">ピラミッド</div>
+                </div>
+            <div id="current-block">選択中: 基本ブロック</div>
+            <hr>
+            <h4><i class="fas fa-sync-alt"></i> 回転・反転</h4>
+            <div class="button-group">
+                <button id="rotate-j" title="X軸回転 (J)"><i class="fas fa-rotate-left"></i> Pitch</button>
+                <button id="rotate-k" title="Y軸回転 (K)"><i class="fas fa-rotate-up"></i> Yaw</button> <button id="rotate-l" title="Z軸回転 (L)"><i class="fas fa-rotate-right"></i> Roll</button>
+                <button id="flip-u" title="X軸反転 (U)"><i class="fas fa-arrows-left-right"></i> Flip X</button>
+                <button id="flip-i" title="Y軸反転 (I)"><i class="fas fa-arrows-up-down"></i> Flip Y</button>
+                <button id="flip-o" title="Z軸反転 (O)"><i class="fas fa-arrows-left-right fa-rotate-90"></i> Flip Z</button> </div>
+        </div>
+
+        <div id="right-panel" class="ui-panel">
+            <div id="xml-edit-panel">
+                <h4><i class="fas fa-edit"></i> XML編集</h4>
+                <div class="edit-section">
+                     <label>座標 (vp):</label>
+                     <div class="vector3-input"> X:<input type="number" step="1" id="xml-vp-x"> Y:<input type="number" step="1" id="xml-vp-y"> Z:<input type="number" step="1" id="xml-vp-z"> </div>
+                </div>
+                 <div class="edit-section">
+                     <label>回転行列 (r):</label>
+                     <div class="matrix3x3-input">
+                         <div> <input type="number" step="1" id="xml-r11"><input type="number" step="1" id="xml-r21"><input type="number" step="1" id="xml-r31"> </div>
+                         <div> <input type="number" step="1" id="xml-r12"><input type="number" step="1" id="xml-r22"><input type="number" step="1" id="xml-r32"> </div>
+                         <div> <input type="number" step="1" id="xml-r13"><input type="number" step="1" id="xml-r23"><input type="number" step="1" id="xml-r33"> </div>
+                     </div>
+                 </div>
+                 <div id="xml-edit-info">ブロックを選択してください。</div>
+            </div>
+             <div id="info-panel" style="margin-top: 15px;">
+                 <h4><i class="fas fa-info-circle"></i> 情報</h4>
+                 <p>モード: <strong id="info-mode">範囲選択</strong></p>
+                 <p style="margin-bottom: 3px;">操作ガイド:</p>
+                 <ul id="info-guide"></ul>
+             </div>
+        </div>
+    </div>
+
+    <div id="footer-toolbar">
+         <div id="status-coords">X: -- Y: -- Z: --</div>
+         <div id="clipboard-transform-controls" style="display: flex; gap: 8px;">
+             <button title="クリップボード回転 (J)"><i class="fas fa-rotate-left"></i></button>
+             <button title="クリップボード回転 (K)"><i class="fas fa-rotate-up"></i></button>
+             <button title="クリップボード回転 (L)"><i class="fas fa-rotate-right"></i></button>
+             <span style="border-left: 1px solid #666; margin: 0 5px;"></span>
+             <button title="クリップボード反転 (U)"><i class="fas fa-arrows-left-right"></i></button>
+             <button title="クリップボード反転 (I)"><i class="fas fa-arrows-up-down"></i></button>
+             <button title="クリップボード反転 (O)"><i class="fas fa-arrows-left-right fa-rotate-90"></i></button>
+         </div>
+         <div id="status-message">準備完了</div>
+    </div>
+
+    <script type="importmap">
+        { "imports": {
+            "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+        } }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let camera, scene, renderer, controls;
+
+        function init() {
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(-15, 12, -18); camera.lookAt(0, 0, 0);
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0x3d434f);
+            scene.add(new THREE.AmbientLight(0x808080));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.0); dirLight.position.set(-10, 15, -10); scene.add(dirLight);
+            scene.add(new THREE.GridHelper(100, 100, 0x888888, 0x666666)); scene.add(new THREE.AxesHelper(5));
+            const canvas = document.getElementById('canvas');
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); renderer.setPixelRatio(window.devicePixelRatio);
+            controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = 0.1; controls.screenSpacePanning = true; controls.minDistance = 1; controls.maxDistance = 500;
+            controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY; controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+            controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+            window.addEventListener('resize', onWindowResize); onWindowResize(); // 初期呼び出し
+        }
+        function onWindowResize() { /* ... (前回と同じサイズ調整ロジック) ... */
+            const header = document.getElementById('header-toolbar'); const footer = document.getElementById('footer-toolbar'); const mainContainer = document.getElementById('main-container'); const viewport = document.getElementById('viewport');
+            if(!header || !footer || !mainContainer || ! viewport) return;
+            const availableHeight = window.innerHeight - header.offsetHeight - footer.offsetHeight;
+            mainContainer.style.height = `${availableHeight}px`;
+            camera.aspect = viewport.clientWidth / viewport.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+        }
+        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+        init(); animate();
+
+        // --- UI表示制御デモ (実際の制御はJSで行う) ---
+        const modeSelect = document.getElementById('mode-select');
+        const rangeControls = document.getElementById('range-mode-controls');
+        const clipControls = document.getElementById('clipboard-transform-controls');
+        const infoMode = document.getElementById('info-mode');
+        const infoGuide = document.getElementById('info-guide');
+        const xmlPanel = document.getElementById('xml-edit-panel');
+        const leftTransformButtons = document.querySelector('#left-panel .button-group'); // 左パネルの回転ボタン
+
+        modeSelect.addEventListener('change', (e) => {
+            const mode = e.target.value;
+            infoMode.textContent = modeSelect.options[modeSelect.selectedIndex].text;
+            // 範囲選択モード関連の表示
+            rangeControls.style.display = (mode === 'RANGE_SELECT') ? 'flex' : 'none';
+            clipControls.style.display = (mode === 'RANGE_SELECT') ? 'flex' : 'none'; // クリップボード有無で制御すべき
+            // XML編集パネル表示
+            xmlPanel.style.display = (mode === 'XML_EDIT') ? 'block' : 'none';
+            // 左パネルの回転ボタン表示 (通常とXML編集時)
+            leftTransformButtons.style.display = (mode === 'NORMAL' || mode === 'XML_EDIT') ? 'flex' : 'none';
+
+            // ガイド表示更新 (仮)
+            infoGuide.innerHTML = '';
+            if (mode === 'NORMAL') infoGuide.innerHTML = '<li>クリック: 配置</li><li>JKL/UIOボタン: プレビュー回転/反転</li>';
+            else if (mode === 'DELETE') infoGuide.innerHTML = '<li>クリック: 削除</li>';
+            else if (mode === 'XML_EDIT') infoGuide.innerHTML = '<li>クリック: 選択</li><li>面ドラッグ: 変形</li><li>回転/反転ボタン: 選択ブロック操作</li>';
+            else if (mode === 'RANGE_SELECT') infoGuide.innerHTML = '<li>ギズモドラッグ: 移動/リサイズ</li><li>Ctrl+Click: 範囲リセット</li><li>Shift+Click: 範囲拡張</li><li>C/X/Vボタン: コピー/カット/ペースト</li><li>下部ボタン: クリップボード回転/反転</li>';
+            else if (mode === 'PAINT') infoGuide.innerHTML = '<li>クリック: 塗る (未実装)</li>';
+        });
+        modeSelect.dispatchEvent(new Event('change')); // 初期表示
+
+        // ファイル読込ボタン
+         document.getElementById('load-button').addEventListener('click', () => { document.getElementById('file-input').click(); });
+
+    </script>
+
+</body>
+</html>

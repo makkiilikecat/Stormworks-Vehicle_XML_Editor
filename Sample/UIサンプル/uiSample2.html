@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stormworks Vehicle Editor UI Sample (Rev. 3 - Clean)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #333; font-family: sans-serif; color: #eee; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+        #three-canvas { position: fixed; top: 0; left: 0; display: block; width: 100vw; height: 100vh; z-index: 0; }
+        .toolbar { position: fixed; background-color: rgba(50, 50, 60, 0.85); border-radius: 15px; padding: 10px; display: flex; align-items: center; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.3); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); transition: transform 0.3s ease-in-out; }
+        #left-toolbar { left: 10px; top: 50%; transform: translateY(-50%); flex-direction: column; gap: 15px; }
+        #right-toolbar { right: 10px; top: 50%; transform: translateY(-50%); flex-direction: column; gap: 15px; }
+        #bottom-toolbar { bottom: 20px; left: 50%; transform: translateX(-50%); flex-direction: row; gap: 10px; padding: 8px 15px; }
+        #bottom-toolbar.lowered { transform: translateX(-50%) translateY(100px); }
+        .toolbar-button, .hotbar-item { background-color: rgba(70, 70, 80, 0.9); color: #eee; border: 1px solid #666; border-radius: 8px; padding: 12px; font-size: 18px; cursor: pointer; transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s; display: flex; justify-content: center; align-items: center; min-width: 44px; min-height: 44px; flex-shrink: 0; }
+        .toolbar-button:active, .hotbar-item:active { background-color: rgba(90, 90, 100, 0.9); transform: scale(0.95); }
+        .toolbar-button.active, .hotbar-item.active { box-shadow: 0 0 8px rgba(80, 227, 194, 0.5); border-color: #7af0d6; }
+        .toolbar-button.mode-button.active { background-color: #4a90e2; border-color: #7ab3f0; box-shadow: 0 0 8px rgba(74, 144, 226, 0.5); }
+         .hotbar-item.active { background-color: #50e3c2; }
+        .toolbar-button[data-action^="SYMMETRY"].active { background-color: #e27d4a; border-color: #f0a77a; box-shadow: 0 0 8px rgba(226, 125, 74, 0.5); }
+        .icon-text { font-weight: bold; }
+        #info-display { position: fixed; top: 15px; left: 15px; background-color: rgba(0, 0, 0, 0.7); padding: 8px 12px; border-radius: 5px; font-size: 13px; z-index: 10; line-height: 1.4; }
+        #info-display table { border-spacing: 5px 0; margin: 5px 0; font-family: monospace;}
+        #info-display td:first-child { text-align: right; color: #aaa; }
+        #info-display td:last-child { font-weight: bold; }
+        #fps-display { margin-top: 5px; }
+        #battery-save-button { background-color: #555; color: #eee; border: 1px solid #888; border-radius: 5px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-top: 5px; transition: background-color 0.2s; min-width: auto; min-height: auto; height: auto; width: auto; }
+        #battery-save-button.fps-60 { background-color: #4a90e2; }
+        #battery-save-button.fps-30 { background-color: #e27d4a; }
+        #camera-stick { position: fixed; bottom: 30px; left: 30px; width: 180px; height: 180px; background-color: rgba(0, 0, 0, 0.4); border-radius: 50%; display: flex; justify-content: center; align-items: center; z-index: 10; transition: opacity 0.3s, transform 0.3s; }
+        #stick-handle { width: 90px; height: 90px; background-color: rgba(200, 200, 200, 0.8); border-radius: 50%; cursor: grab; position: absolute; }
+        #camera-stick.hidden { opacity: 0; transform: scale(0.5); pointer-events: none; }
+        #xml-edit-panel { position: fixed; top: 15px; right: 88px; width: 280px; background-color: rgba(40, 40, 50, 0.9); padding: 15px; border-radius: 10px; border: 1px solid #555; color: #eee; font-size: 14px; max-height: calc(100vh - 30px); overflow: hidden; z-index: 9; box-shadow: 0 2px 5px rgba(0,0,0,0.3); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); transition: height 0.3s ease-in-out, padding 0.3s ease-in-out; height: auto; }
+        #xml-edit-panel.collapsed { height: 40px; padding-top: 5px; padding-bottom: 5px; }
+        #xml-edit-panel.collapsed .edit-section, #xml-edit-panel.collapsed .info-text { display: none; }
+        #xml-edit-panel h4 { margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #666; padding-bottom: 5px; color: lightskyblue; transition: margin 0.3s ease-in-out; position: relative; }
+         #xml-edit-panel.collapsed h4 { margin-bottom: 0; border-bottom: none; }
+        #toggle-xml-panel { position: absolute; top: -5px; right: -5px; background: rgba(100, 100, 110, 0.8); color: #ccc; border: none; border-radius: 50%; width: 24px; height: 24px; font-size: 16px; line-height: 24px; text-align: center; cursor: pointer; transition: transform 0.3s ease-in-out; }
+         #toggle-xml-panel:hover { background: rgba(120, 120, 130, 0.9); }
+         #xml-edit-panel.collapsed #toggle-xml-panel { transform: rotate(180deg); }
+        .edit-section { margin-bottom: 15px; } .edit-section label { display: block; margin-bottom: 5px; font-weight: bold; color: #ccc; } .vector3-input { display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; } .vector3-input input[type="number"] { width: 100%; box-sizing: border-box; } .matrix3x3-input { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; } .matrix3x3-input div { display: flex; flex-direction: column; gap: 4px; } .matrix3x3-input input[type="number"] { width: 100%; box-sizing: border-box; text-align: right; padding: 3px; } #xml-edit-panel input[type="number"] { background-color: #2a2a30; color: #eee; border: 1px solid #555; border-radius: 3px; padding: 4px; font-family: monospace; } #xml-edit-panel input[type="number"]:focus { outline: none; border-color: lightskyblue; background-color: #333; } .info-text { font-size: 0.85em; color: #aaa; margin-top: 10px; min-height: 1em; }
+        #inventory-panel { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(calc(100% + 20px)); width: 66vw; max-width: 600px; height: 60vh; background-color: rgba(40, 40, 50, 0.9); border-radius: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.5); z-index: 20; transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); opacity: 0; pointer-events: none; }
+        #inventory-panel.visible { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+        #inventory-search { width: calc(100% - 10px); padding: 10px 15px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #666; background-color: #2a2a30; color: #eee; font-size: 16px; box-sizing: border-box; }
+        .inventory-content { flex-grow: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #666 #333; }
+        .inventory-content::-webkit-scrollbar { width: 8px; } .inventory-content::-webkit-scrollbar-track { background: #333; border-radius: 4px;} .inventory-content::-webkit-scrollbar-thumb { background-color: #666; border-radius: 4px; border: 2px solid #333; }
+        .inventory-tag-group h4 { margin: 15px 0 10px 5px; color: lightskyblue; font-size: 16px; border-bottom: 1px solid #555; padding-bottom: 5px; }
+        .inventory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 15px; padding: 0 5px 15px 5px; }
+        .inventory-item { background-color: rgba(70, 70, 80, 0.8); border: 1px solid #666; border-radius: 8px; aspect-ratio: 1 / 1; display: flex; justify-content: center; align-items: center; font-size: 24px; cursor: pointer; transition: background-color 0.2s, transform 0.1s; position: relative; }
+        .inventory-item:active { transform: scale(0.95); }
+        .inventory-item.active { background-color: #50e3c2; border-color: #7af0d6; box-shadow: 0 0 8px rgba(80, 227, 194, 0.5); }
+        #inventory-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 19; display: none; opacity: 0; transition: opacity 0.3s ease-in-out; }
+        #inventory-overlay.visible { display: block; opacity: 1; }
+        #range-adjust-dpad { position: fixed; bottom: 30px; right: 30px; width: 120px; height: 120px; display: none; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 5px; z-index: 10; }
+        #range-adjust-dpad button { background-color: rgba(70, 70, 80, 0.8); color: #eee; border: 1px solid #666; border-radius: 8px; font-size: 20px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+        #range-adjust-dpad button:active { background-color: rgba(90, 90, 100, 0.9); transform: scale(0.95); }
+        #dpad-up    { grid-column: 2 / 3; grid-row: 1 / 2; }
+        #dpad-left  { grid-column: 1 / 2; grid-row: 2 / 3; }
+        #dpad-right { grid-column: 3 / 4; grid-row: 2 / 3; }
+        #dpad-down  { grid-column: 2 / 3; grid-row: 3 / 4; }
+    </style>
+</head>
+<body>
+    <canvas id="three-canvas"></canvas>
+    <div id="inventory-overlay"></div>
+
+    <div id="left-toolbar" class="toolbar">
+        <button class="toolbar-button mode-button" data-mode="NORMAL" title="通常モード"><span class="icon-text">➕</span></button>
+        <button class="toolbar-button mode-button" data-mode="DELETE" title="削除モード"><span class="icon-text">🗑️</span></button>
+        <button class="toolbar-button mode-button" data-mode="XML_EDIT" title="XML編集モード"><span class="icon-text">✏️</span></button>
+        <button class="toolbar-button mode-button" data-mode="RANGE_SELECT" title="範囲選択モード"><span class="icon-text">🔲</span></button>
+        <button class="toolbar-button mode-button" data-mode="PAINT" title="ペイントモード"><span class="icon-text">🎨</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <button id="toggle-stick-button" class="toolbar-button active" title="移動スティック表示切替"><span class="icon-text">🕹️</span></button>
+    </div>
+
+    <div id="right-toolbar" class="toolbar">
+        <button class="toolbar-button range-only" data-action="COPY" title="コピー" style="display: none;"><span class="icon-text">📄</span></button>
+        <button class="toolbar-button range-only" data-action="CUT" title="カット" style="display: none;"><span class="icon-text">✂️</span></button>
+        <button class="toolbar-button range-only" data-action="PASTE" title="ペースト" style="display: none;"><span class="icon-text">📋</span></button>
+        <hr class="range-only" style="width: 80%; border-color: #666; margin: 5px 0; display: none;">
+        <button class="toolbar-button" data-action="SYMMETRY_X" title="X軸対称"><span class="icon-text">X</span></button>
+        <button class="toolbar-button" data-action="SYMMETRY_Y" title="Y軸対称"><span class="icon-text">Y</span></button>
+        <button class="toolbar-button" data-action="SYMMETRY_Z" title="Z軸対称"><span class="icon-text">Z</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <button class="toolbar-button" data-action="SAVE" title="保存"><span class="icon-text">💾</span></button>
+        <button class="toolbar-button" data-action="LOAD" title="読込"><span class="icon-text">📂</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <button id="fullscreen-button" class="toolbar-button" title="フルスクリーン切替"><span class="icon-text">⛶</span></button>
+    </div>
+
+    <div id="bottom-toolbar" class="toolbar">
+        <button class="hotbar-item" data-block-id="0" title="ブロック1"><span class="icon-text">🧱</span></button>
+        <button class="hotbar-item" data-block-id="1" title="ブロック2"><span class="icon-text">🔩</span></button>
+        <button class="hotbar-item" data-block-id="2" title="ブロック3"><span class="icon-text">⚙️</span></button>
+        <button class="hotbar-item" data-block-id="3" title="ブロック4"><span class="icon-text">💡</span></button>
+        <button class="hotbar-item" data-block-id="4" title="ブロック5"><span class="icon-text">🔺</span></button>
+        <div style="width: 1px; background-color: #666; margin: 0 5px; height: 30px;"></div>
+        <button id="toggle-inventory-button" class="toolbar-button" title="インベントリ開閉"><span class="icon-text">🎒</span></button>
+    </div>
+
+    <div id="info-display">
+        <div>質量: 1234 kg</div>
+        <div>コスト: $5678</div>
+        <table>
+             <tr><td>X:</td><td><span id="size-x">15</span> ブロック (<span id="size-x-m">3.75</span>m)</td></tr>
+             <tr><td>Y:</td><td><span id="size-y">8</span> ブロック (<span id="size-y-m">2.00</span>m)</td></tr>
+             <tr><td>Z:</td><td><span id="size-z">22</span> ブロック (<span id="size-z-m">5.50</span>m)</td></tr>
+        </table>
+        <div id="fps-display">FPS: --</div>
+        <button id="battery-save-button" class="toolbar-button fps-unlimited" title="FPS制限切替 (∞ > 60 > 30)">∞</button>
+    </div>
+
+    <div id="camera-stick">
+        <div id="stick-handle"></div>
+    </div>
+
+    <div id="xml-edit-panel" style="display: none;">
+        <h4>XML編集 <button id="toggle-xml-panel" title="パネルを格納/展開">^</button></h4>
+        <div class="edit-section"> <label>座標 (vp):</label> <div class="vector3-input"> X:<input type="number" step="1" id="edit-vp-x"> Y:<input type="number" step="1" id="edit-vp-y"> Z:<input type="number" step="1" id="edit-vp-z"> </div> </div>
+        <div class="edit-section"> <label>回転行列 (r):</label> <div class="matrix3x3-input"> <div><input type="number" step="1" id="edit-r-11"><input type="number" step="1" id="edit-r-21"><input type="number" step="1" id="edit-r-31"></div> <div><input type="number" step="1" id="edit-r-12"><input type="number" step="1" id="edit-r-22"><input type="number" step="1" id="edit-r-32"></div> <div><input type="number" step="1" id="edit-r-13"><input type="number" step="1" id="edit-r-23"><input type="number" step="1" id="edit-r-33"></div> </div> </div>
+        <div id="xml-edit-info" class="info-text">ブロックを選択</div>
+    </div>
+
+    <div id="inventory-panel">
+        <input type="search" id="inventory-search" placeholder="ブロック名を検索...">
+        <div class="inventory-content">
+            <div class="inventory-tag-group"><h4>基本ブロック</h4><div class="inventory-grid"><div class="inventory-item" data-inv-id="block_1x1" title="ブロック"><span class="icon-text">🧱</span></div><div class="inventory-item" data-inv-id="wedge_1x1" title="ウェッジ"><span class="icon-text">◤</span></div><div class="inventory-item" data-inv-id="pyramid_1x1" title="ピラミッド"><span class="icon-text">△</span></div><div class="inventory-item" data-inv-id="block_1x2" title="ブロック 1x2"><span class="icon-text">🧱<small>2</small></span></div><div class="inventory-item" data-inv-id="block_1x4" title="ブロック 1x4"><span class="icon-text">🧱<small>4</small></span></div><div class="inventory-item" data-inv-id="corner_1x1" title="コーナー"><span class="icon-text">◥</span></div></div></div>
+            <div class="inventory-tag-group"><h4>動力</h4><div class="inventory-grid"><div class="inventory-item" data-inv-id="engine_small" title="小型エンジン"><span class="icon-text">⚙️<small>S</small></span></div><div class="inventory-item" data-inv-id="engine_med" title="中型エンジン"><span class="icon-text">⚙️<small>M</small></span></div><div class="inventory-item" data-inv-id="engine_large" title="大型エンジン"><span class="icon-text">⚙️<small>L</small></span></div><div class="inventory-item" data-inv-id="motor_electric" title="電気モーター"><span class="icon-text">⚡</span></div><div class="inventory-item" data-inv-id="propeller_small" title="小型プロペラ"><span class="icon-text">🍥<small>S</small></span></div><div class="inventory-item" data-inv-id="propeller_large" title="大型プロペラ"><span class="icon-text">🍥<small>L</small></span></div></div></div>
+            <div class="inventory-tag-group"><h4>その他</h4><div class="inventory-grid"><div class="inventory-item" data-inv-id="light" title="ライト"><span class="icon-text">💡</span></div><div class="inventory-item" data-inv-id="button" title="ボタン"><span class="icon-text">🔘</span></div><div class="inventory-item" data-inv-id="seat" title="座席"><span class="icon-text">💺</span></div><div class="inventory-item" data-inv-id="winch" title="ウィンチ"><span class="icon-text">⚓</span></div></div></div>
+        </div>
+    </div>
+
+    <div id="range-adjust-dpad">
+        <button id="dpad-up">▲</button>
+        <button id="dpad-left">◀</button>
+        <button id="dpad-right">▶</button>
+        <button id="dpad-down">▼</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.163.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls;
+        let currentMode = 'NORMAL';
+        let selectedHotbarIndex = 0;
+        const hotbarItems = [];
+        let inventoryVisible = false;
+        let selectedInventoryItem = null;
+        let lastTapTime = 0;
+        const doubleTapDelay = 300;
+        let xmlPanelCollapsed = false;
+        let stickVisible = true;
+        let clock = new THREE.Clock();
+        let lastFrameTime = 0;
+        let targetFrameInterval = 0;
+        let fpsLimitMode = 0;
+
+        const cameraStick = document.getElementById('camera-stick');
+        const stickHandle = document.getElementById('stick-handle');
+        const fpsDisplay = document.getElementById('fps-display');
+        const batterySaveButton = document.getElementById('battery-save-button');
+        const bottomToolbar = document.getElementById('bottom-toolbar');
+        const inventoryPanel = document.getElementById('inventory-panel');
+        const inventoryOverlay = document.getElementById('inventory-overlay');
+        const rangeDpad = document.getElementById('range-adjust-dpad');
+        const xmlEditPanel = document.getElementById('xml-edit-panel');
+        const toggleStickButton = document.getElementById('toggle-stick-button');
+        const fullscreenButton = document.getElementById('fullscreen-button');
+
+        let isDraggingStick = false;
+        let stickPointerId = null;
+        let stickStartX = 0, stickStartY = 0, stickCurrentX = 0, stickCurrentY = 0;
+        const stickMaxDistance = (cameraStick.offsetWidth / 2) - (stickHandle.offsetWidth / 2);
+
+        function init() {
+            console.log("Initializing Application...");
+            setupThreeJS();
+            setupUI();
+            updateInfoDisplay();
+            animate();
+        }
+
+        function setupThreeJS() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x3d434f);
+            const canvas = document.getElementById('three-canvas');
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(10, 10, 10);
+            camera.lookAt(0, 0, 0);
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.screenSpacePanning = true;
+            controls.minDistance = 1;
+            controls.maxDistance = 100;
+            controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+            const ambientLight = new THREE.AmbientLight(0x808080);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(5, 10, 7.5);
+            scene.add(directionalLight);
+            const gridHelper = new THREE.GridHelper(50, 50, 0x888888, 0x666666);
+            scene.add(gridHelper);
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+            const cube = new THREE.Mesh(geometry, material);
+            scene.add(cube);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function setupUI() {
+            document.querySelectorAll('#left-toolbar .mode-button').forEach(button => {
+                button.addEventListener('click', () => setMode(button.dataset.mode));
+            });
+            toggleStickButton?.addEventListener('click', toggleStickVisibility);
+            setMode('NORMAL');
+
+            document.querySelectorAll('#right-toolbar .toolbar-button').forEach(button => {
+                const action = button.dataset.action;
+                if (!action) {
+                     fullscreenButton?.addEventListener('click', toggleFullScreen);
+                     return;
+                }
+                switch(action) {
+                    case 'COPY': case 'CUT': case 'PASTE':
+                        button.addEventListener('click', () => alert(`${action} Action (Range Mode - Not Implemented)`)); break;
+                    case 'SYMMETRY_X': case 'SYMMETRY_Y': case 'SYMMETRY_Z':
+                        button.addEventListener('click', () => { button.classList.toggle('active'); alert(`${action} Toggled (Not Implemented)`); }); break;
+                    case 'SAVE': case 'LOAD':
+                        button.addEventListener('click', () => alert(`${action} Action (Not Implemented)`)); break;
+                }
+            });
+
+            document.getElementById('bottom-toolbar').querySelectorAll('.hotbar-item').forEach((item, index) => {
+                hotbarItems.push(item);
+                item.addEventListener('click', () => { setSelectedHotbar(index); setMode('NORMAL'); });
+                if (index === selectedHotbarIndex) item.classList.add('active');
+            });
+            document.getElementById('toggle-inventory-button')?.addEventListener('click', () => toggleInventory());
+
+            stickHandle?.addEventListener('pointerdown', onStickDown);
+            document.addEventListener('pointermove', onStickMove);
+            document.addEventListener('pointerup', onStickUp);
+            document.addEventListener('pointercancel', onStickUp);
+
+            document.getElementById('toggle-xml-panel')?.addEventListener('click', toggleXmlPanel);
+
+            setupInventoryPanel();
+            inventoryOverlay?.addEventListener('click', () => toggleInventory(false));
+
+            document.querySelectorAll('#range-adjust-dpad button').forEach(button => {
+                 button.addEventListener('click', () => handleDpadClick(button.id));
+            });
+
+             batterySaveButton?.addEventListener('click', cycleFpsLimit);
+        }
+
+        function setupInventoryPanel() {
+             inventoryPanel?.querySelectorAll('.inventory-item').forEach(item => {
+                 item.addEventListener('click', (e) => {
+                     const now = Date.now();
+                     if (now - lastTapTime < doubleTapDelay && e.target.closest('.inventory-item') === selectedInventoryItem) {
+                         toggleInventory(false);
+                     } else {
+                         selectInventoryItem(item);
+                         setMode('NORMAL');
+                     }
+                     lastTapTime = now;
+                     e.stopPropagation();
+                 });
+            });
+            document.getElementById('inventory-search')?.addEventListener('input', (e) => {
+                 const searchTerm = e.target.value.toLowerCase();
+                 inventoryPanel?.querySelectorAll('.inventory-item').forEach(item => {
+                      const itemId = item.dataset.invId || '';
+                      const itemTitle = item.title || itemId;
+                      item.style.opacity = (itemId.toLowerCase().includes(searchTerm) || itemTitle.toLowerCase().includes(searchTerm)) ? '1' : '0.3';
+                 });
+            });
+        }
+
+        function setMode(newMode) {
+            const validModes = ['NORMAL', 'DELETE', 'XML_EDIT', 'RANGE_SELECT', 'PAINT'];
+            if (!newMode || !validModes.includes(newMode) || currentMode === newMode) return;
+            console.log(`Switching mode: ${currentMode} -> ${newMode}`);
+            currentMode = newMode;
+
+            document.querySelectorAll('#left-toolbar .mode-button').forEach(button => {
+                button.classList.toggle('active', button.dataset.mode === newMode);
+            });
+
+            const isXmlEditVisible = (newMode === 'XML_EDIT');
+            xmlEditPanel.style.display = isXmlEditVisible ? 'block' : 'none';
+            if (isXmlEditVisible && xmlPanelCollapsed) {
+                toggleXmlPanel();
+            }
+
+            const isRangeSelectVisible = (newMode === 'RANGE_SELECT');
+            document.querySelectorAll('#right-toolbar .range-only').forEach(button => {
+                button.style.display = isRangeSelectVisible ? 'flex' : 'none';
+            });
+            rangeDpad.style.display = isRangeSelectVisible ? 'grid' : 'none';
+        }
+
+        function setSelectedHotbar(index) {
+            if (index >= 0 && index < hotbarItems.length) {
+                if (selectedHotbarIndex >= 0 && selectedHotbarIndex < hotbarItems.length) {
+                    hotbarItems[selectedHotbarIndex]?.classList.remove('active');
+                }
+                selectedHotbarIndex = index;
+                hotbarItems[selectedHotbarIndex]?.classList.add('active');
+                console.log(`Selected hotbar item: ${index}`);
+            }
+        }
+
+        function toggleInventory(forceState = null) {
+            const shouldBeVisible = forceState !== null ? forceState : !inventoryVisible;
+            if (shouldBeVisible === inventoryVisible) return;
+            inventoryPanel?.classList.toggle('visible', shouldBeVisible);
+            inventoryOverlay?.classList.toggle('visible', shouldBeVisible);
+            bottomToolbar?.classList.toggle('lowered', shouldBeVisible);
+            inventoryVisible = shouldBeVisible;
+            console.log(`Inventory toggled: ${inventoryVisible ? 'Visible' : 'Hidden'}`);
+            if (controls) controls.enabled = !inventoryVisible && !isDraggingStick;
+        }
+
+        function selectInventoryItem(itemElement) {
+             if (selectedInventoryItem) {
+                 selectedInventoryItem.classList.remove('active');
+             }
+             selectedInventoryItem = itemElement;
+             selectedInventoryItem?.classList.add('active');
+             const itemId = itemElement?.dataset?.invId;
+             console.log(`Selected inventory item: ${itemId}`);
+        }
+
+         function toggleXmlPanel() {
+             xmlPanelCollapsed = !xmlPanelCollapsed;
+             xmlEditPanel?.classList.toggle('collapsed', xmlPanelCollapsed);
+             console.log(`XML panel toggled: ${xmlPanelCollapsed ? 'Collapsed' : 'Expanded'}`);
+         }
+
+        function toggleStickVisibility() {
+             stickVisible = !stickVisible;
+             cameraStick?.classList.toggle('hidden', !stickVisible);
+             toggleStickButton?.classList.toggle('active', stickVisible);
+             console.log(`Camera stick visibility: ${stickVisible ? 'Visible' : 'Hidden'}`);
+             if (!stickVisible && isDraggingStick && stickPointerId !== null) {
+                 onStickUp({ pointerId: stickPointerId });
+             }
+        }
+
+        function handleDpadClick(buttonId) {
+            if (currentMode !== 'RANGE_SELECT') return;
+            let direction = '';
+            switch(buttonId) {
+                case 'dpad-up': direction = 'Up'; break;
+                case 'dpad-down': direction = 'Down'; break;
+                case 'dpad-left': direction = 'Left'; break;
+                case 'dpad-right': direction = 'Right'; break;
+            }
+            console.log(`Range Adjust DPAD: ${direction} (+1 block)`);
+        }
+
+        function cycleFpsLimit() {
+             fpsLimitMode = (fpsLimitMode + 1) % 3;
+             switch (fpsLimitMode) {
+                 case 0: targetFrameInterval = 0; batterySaveButton.textContent = '∞'; batterySaveButton.className = 'toolbar-button fps-unlimited'; break;
+                 case 1: targetFrameInterval = 1000 / 60; batterySaveButton.textContent = '60'; batterySaveButton.className = 'toolbar-button fps-60 active'; break;
+                 case 2: targetFrameInterval = 1000 / 30; batterySaveButton.textContent = '30'; batterySaveButton.className = 'toolbar-button fps-30 active'; break;
+             }
+             lastFrameTime = performance.now();
+             console.log(`FPS Limit set to: ${targetFrameInterval === 0 ? 'Unlimited' : (1000 / targetFrameInterval).toFixed(0)}`);
+         }
+
+        function toggleFullScreen() {
+             if (!document.fullscreenElement) {
+                 document.documentElement.requestFullscreen().catch(err => {
+                     alert(`フルスクリーンモードにできませんでした: ${err.message} (${err.name})`);
+                 });
+             } else {
+                 if (document.exitFullscreen) {
+                     document.exitFullscreen();
+                 }
+             }
+         }
+
+         function updateInfoDisplay() {
+             const sizeX = 15, sizeY = 8, sizeZ = 22;
+             document.getElementById('size-x').textContent = sizeX;
+             document.getElementById('size-x-m').textContent = (sizeX * 0.25).toFixed(2);
+             document.getElementById('size-y').textContent = sizeY;
+             document.getElementById('size-y-m').textContent = (sizeY * 0.25).toFixed(2);
+             document.getElementById('size-z').textContent = sizeZ;
+             document.getElementById('size-z-m').textContent = (sizeZ * 0.25).toFixed(2);
+         }
+
+        function onStickDown(event) {
+             if (!stickVisible || inventoryVisible) return;
+             if (controls) controls.enabled = false;
+            isDraggingStick = true;
+             stickPointerId = event.pointerId;
+            stickHandle.setPointerCapture(stickPointerId);
+            stickHandle.style.cursor = 'grabbing';
+            const touch = event.touches ? event.touches[0] : event;
+            stickStartX = touch.clientX;
+            stickStartY = touch.clientY;
+            stickCurrentX = 0; stickCurrentY = 0;
+        }
+
+        function onStickMove(event) {
+             if (!isDraggingStick || event.pointerId !== stickPointerId || inventoryVisible) return;
+            const touch = event.touches ? event.touches[0] : event;
+            const deltaX = touch.clientX - stickStartX;
+            const deltaY = touch.clientY - stickStartY;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            const angle = Math.atan2(deltaY, deltaX);
+            const clampedDistance = Math.min(distance, stickMaxDistance);
+            stickCurrentX = Math.cos(angle) * clampedDistance;
+            stickCurrentY = Math.sin(angle) * clampedDistance;
+            stickHandle.style.transform = `translate(${stickCurrentX}px, ${stickCurrentY}px)`;
+            const moveSpeed = 0.05;
+            const moveXNormalized = stickCurrentX / stickMaxDistance;
+            const moveYNormalized = stickCurrentY / stickMaxDistance;
+            const moveForward = -moveYNormalized * moveSpeed;
+            const moveRight = moveXNormalized * moveSpeed;
+            const forwardVector = new THREE.Vector3();
+            camera.getWorldDirection(forwardVector);
+            forwardVector.y = 0;
+            forwardVector.normalize();
+            const rightVector = new THREE.Vector3().crossVectors(camera.up, forwardVector).normalize();
+            const moveVector = new THREE.Vector3().addScaledVector(forwardVector, -moveForward).addScaledVector(rightVector, moveRight);
+            camera.position.add(moveVector);
+        }
+
+        function onStickUp(event) {
+             if (!isDraggingStick || event.pointerId !== stickPointerId) return;
+            isDraggingStick = false;
+            stickHandle.releasePointerCapture(stickPointerId);
+            stickPointerId = null;
+            stickHandle.style.cursor = 'grab';
+            stickHandle.style.transition = 'transform 0.1s ease-out';
+            stickHandle.style.transform = 'translate(0px, 0px)';
+            setTimeout(() => { stickHandle.style.transition = ''; }, 100);
+            if (controls && !inventoryVisible) controls.enabled = true;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate(currentTime) {
+            requestAnimationFrame(animate);
+            if (targetFrameInterval > 0) {
+                const elapsed = currentTime - lastFrameTime;
+                if (elapsed < targetFrameInterval) {
+                    return;
+                }
+                lastFrameTime = currentTime - (elapsed % targetFrameInterval);
+            }
+            const delta = clock.getDelta();
+            const currentFps = delta > 0 ? (1.0 / delta) : 0;
+            if (currentTime - (animate.lastFpsUpdateTime || 0) > 500) {
+                fpsDisplay.textContent = `FPS: ${Math.round(currentFps)}`;
+                animate.lastFpsUpdateTime = currentTime;
+            }
+            if (controls && controls.enabled) { controls.update(); }
+            renderer.render(scene, camera);
+        }
+
+        init();
+
+    </script>
+</body>
+</html>

@@ -1,198 +1,391 @@
-/* 基本的なページスタイル */
+/* === 基本スタイル === */
 body {
-    margin: 0; /* ブラウザデフォルトのマージンを削除 */
-    overflow: hidden; /* スクロールバーを非表示 */
-    background-color: #333; /* 背景色を暗めに設定 */
-    font-family: sans-serif; /* 基本フォント設定 */
+    margin: 0; /* ブラウザデフォルトのマージンを除去 */
+    overflow: hidden; /* スクロールバーを常に非表示 */
+    background-color: #333; /* 背景色 */
+    font-family: sans-serif; /* 基本フォント */
     color: #eee; /* 基本文字色 */
+    /* タッチ操作による意図しない選択やメニュー表示を抑制 */
+    user-select: none;
+    -webkit-user-select: none; /* Safari用 */
+    -webkit-touch-callout: none; /* iOSでの長押しメニュー抑制 */
 }
 
-/* Canvas要素をウィンドウ全体に表示 */
-#workbench-canvas {
-    position: fixed; /* UI要素の下に配置 */
+/* 3Dビュー用Canvas */
+#three-canvas {
+    position: fixed; /* 画面に固定 */
     top: 0;
     left: 0;
-    display: block; /* インライン要素の隙間を削除 */
-    width: 100vw; /* ビューポート幅全体 */
-    height: 100vh; /* ビューポート高さ全体 */
-    z-index: -1; /* UIより後ろに */
+    display: block; /* 不要な隙間を削除 */
+    width: 100vw; /* 画面幅全体 */
+    height: 100vh; /* 画面高さ全体 */
+    z-index: 0; /* UI要素より後ろに配置 */
 }
 
-/* ファイル操作UIのスタイル */
-#file-controls {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background-color: rgba(0, 0, 0, 0.7);
-    padding: 10px;
-    border-radius: 5px;
-    display: flex;
-    align-items: center; /* 要素を縦中央揃え */
-    gap: 10px; /* 要素間のスペース */
-    z-index: 10; /* 他のUIより手前に */
+/* === ツールバー共通スタイル === */
+.toolbar {
+    position: fixed; /* 画面に固定 */
+    background-color: rgba(50, 50, 60, 0.85); /* 半透明の背景色 */
+    border-radius: 15px; /* 角丸 */
+    padding: 10px; /* 内側の余白 */
+    display: flex; /* 子要素をフレックスボックスで配置 */
+    align-items: center; /* 子要素を垂直方向中央揃え */
+    z-index: 10; /* 他のUI要素より手前に表示 */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3); /* 影 */
+    backdrop-filter: blur(5px); /* すりガラス効果 (対応ブラウザ) */
+    -webkit-backdrop-filter: blur(5px); /* Safari用 */
+    transition: transform 0.3s ease-in-out; /* インベントリ表示時の移動アニメーション用 */
 }
 
-#file-controls label {
-    font-weight: bold;
+/* 左ツールバー */
+#left-toolbar {
+    left: 10px; /* 画面左端からの距離 */
+    top: 50%; /* 上から50%の位置 */
+    transform: translateY(-50%); /* Y軸方向に自身の高さの半分だけ上に移動して中央揃え */
+    flex-direction: column; /* 子要素を縦に並べる */
+    gap: 15px; /* ボタン間の垂直方向の隙間 */
+}
+/* 右ツールバー */
+#right-toolbar {
+    right: 10px; /* 画面右端からの距離 */
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    gap: 15px;
+}
+/* 下ツールバー (ホットバー) */
+#bottom-toolbar {
+    bottom: 20px; /* 画面下からの距離 */
+    left: 50%; /* 左から50%の位置 */
+    transform: translateX(-50%); /* X軸方向に自身の幅の半分だけ左に移動して中央揃え */
+    flex-direction: row; /* 子要素を横に並べる */
+    gap: 10px; /* ボタン間の水平方向の隙間 */
+    padding: 8px 15px; /* 内側の余白を調整 */
+}
+/* インベントリ表示時に下ツールバーを少し下げるクラス */
+#bottom-toolbar.lowered {
+    transform: translateX(-50%) translateY(100px); /* Y方向に下に移動 */
 }
 
-#file-controls button {
-    padding: 5px 10px;
-    cursor: pointer;
+/* === ツールバーボタン・ホットバーアイテム共通 === */
+.toolbar-button, .hotbar-item {
+    background-color: rgba(70, 70, 80, 0.9); /* ボタン背景色 */
+    color: #eee; /* 文字色 */
+    border: 1px solid #666; /* 枠線 */
+    border-radius: 8px; /* 角丸 */
+    padding: 12px; /* 内側余白 (タッチしやすく) */
+    font-size: 18px; /* アイコン用文字サイズ */
+    cursor: pointer; /* カーソルをポインターに */
+    transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s; /* アニメーション効果 */
+    display: flex; /* アイコン文字を中央揃えするため */
+    justify-content: center; /* 水平中央揃え */
+    align-items: center; /* 垂直中央揃え */
+    min-width: 44px; /* タッチターゲットの最小幅 */
+    min-height: 44px; /* タッチターゲットの最小高さ */
+    flex-shrink: 0; /* ホットバーでアイテムが縮まないように */
+}
+/* タッチ/クリック時のスタイル */
+.toolbar-button:active, .hotbar-item:active {
+    background-color: rgba(90, 90, 100, 0.9); /* 少し明るい背景色 */
+    transform: scale(0.95); /* 少し小さくする */
 }
 
-#file-status {
-    font-size: 0.9em;
-    margin-left: 10px;
+/* === アクティブ状態のスタイル === */
+/* 共通ハイライト (対称軸ボタンなど) */
+.toolbar-button.active, .hotbar-item.active {
+     box-shadow: 0 0 8px rgba(80, 227, 194, 0.5); /* 共通のアクティブ色 (例: 緑系の光彩) */
+     border-color: #7af0d6; /* 枠線の色 */
+}
+/* モード選択ボタンのアクティブ色 */
+.toolbar-button.mode-button.active {
+    background-color: #4a90e2; /* 背景色 (青系) */
+    border-color: #7ab3f0;
+    box-shadow: 0 0 8px rgba(74, 144, 226, 0.5); /* 青系の光彩 */
+}
+/* ホットバーのアクティブ色 */
+ .hotbar-item.active {
+     background-color: #50e3c2; /* 背景色 (緑系) */
+ }
+/* 対称軸ボタンのアクティブ色 */
+.toolbar-button[data-action^="SYMMETRY"].active {
+    background-color: #e27d4a; /* 背景色 (オレンジ系) */
+    border-color: #f0a77a;
+    box-shadow: 0 0 8px rgba(226, 125, 74, 0.5); /* オレンジ系の光彩 */
 }
 
-/* モード表示UIのスタイル */
-#mode-indicator {
-    position: absolute;
-    top: 10px;
-    right: 10px; /* 右上に配置 */
+/* アイコン用テキスト */
+.icon-text { font-weight: bold; }
+
+/* === 左上情報表示 === */
+#info-display {
+    position: fixed;
+    top: 15px;
+    left: 15px;
     background-color: rgba(0, 0, 0, 0.7);
     padding: 8px 12px;
     border-radius: 5px;
-    font-size: 0.9em;
-    font-weight: bold;
+    font-size: 13px; /* 文字を少し小さく */
     z-index: 10;
+    line-height: 1.4; /* 行間調整 */
+    pointer-events: none; /* 下の3Dビュー操作を妨げないように */
 }
-
-#current-mode-text {
-    color: lightskyblue; /* モード名を少し目立たせる */
+/* サイズ表示用テーブル */
+#info-display table {
+    border-spacing: 5px 0; /* セル間の隙間 (水平5px, 垂直0) */
+    margin: 5px 0; /* 上下マージン */
+    font-family: monospace; /* 等幅フォント */
 }
-
-/* インベントリ/配置UIのスタイル */
-#inventory-controls {
-    position: absolute;
-    bottom: 10px; /* 下部に配置 */
-    left: 10px;
-    background-color: rgba(0, 0, 0, 0.7);
-    padding: 10px;
+#info-display td:first-child { text-align: right; color: #aaa; } /* 軸ラベル */
+#info-display td:last-child { font-weight: bold; } /* 値 */
+/* FPS表示エリア */
+#fps-display { margin-top: 5px; }
+/* バッテリーセーブボタン */
+#battery-save-button {
+    background-color: #555; /* デフォルト背景 */
+    color: #eee;
+    border: 1px solid #888;
     border-radius: 5px;
-    display: flex;
-    flex-direction: column; /* 縦に並べる */
-    gap: 5px;
-    font-size: 0.9em;
-    z-index: 10;
-}
-
-#inventory-controls div:first-child {
-    font-weight: bold;
-    margin-bottom: 5px;
-}
-
-#inventory-controls button {
-    padding: 4px 8px;
+    padding: 3px 8px; /* 小さめのパディング */
+    font-size: 11px; /* 小さいフォント */
     cursor: pointer;
-}
-
-#current-placement-block {
     margin-top: 5px;
-    font-style: italic;
-    color: lightgray;
+    transition: background-color 0.2s; /* 背景色変化アニメーション */
+    /* ボタン共通スタイルを上書き */
+    min-width: auto;
+    min-height: auto;
+    height: auto;
+    width: auto;
+    pointer-events: auto; /* ボタンはクリックできるようにする */
+}
+/* FPS制限状態に応じた背景色 */
+#battery-save-button.fps-60 { background-color: #4a90e2; } /* 60FPS制限 */
+#battery-save-button.fps-30 { background-color: #e27d4a; } /* 30FPS制限 */
+#battery-save-button.fps-unlimited { background-color: #555; } /* 無制限 */
+
+/* === 左下カメラ移動スティック === */
+#camera-stick {
+    position: fixed;
+    bottom: 30px;
+    left: 30px;
+    width: 180px; /* サイズを大きく */
+    height: 180px;
+    background-color: rgba(0, 0, 0, 0.4);
+    border-radius: 50%; /* 円形 */
+    display: flex; /* ハンドルを中央揃えするため */
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+    transition: opacity 0.3s, transform 0.3s; /* 表示/非表示アニメーション */
+}
+/* スティックのつまみ */
+#stick-handle {
+    width: 90px; /* サイズを大きく */
+    height: 90px;
+    background-color: rgba(200, 200, 200, 0.8);
+    border-radius: 50%;
+    cursor: grab; /* カーソル形状 */
+    position: absolute; /* JSで位置を制御 */
+}
+/* スティック非表示時のスタイル */
+#camera-stick.hidden {
+    opacity: 0; /* 透明にする */
+    transform: scale(0.5); /* 小さくする */
+    pointer-events: none; /* 操作を受け付けないようにする */
 }
 
-
-/* --- Stage 3.2 追加: XML編集パネル --- */
-
-/* 編集パネル共通スタイル */
-.edit-panel {
-    position: absolute;
-    top: 60px; /* ファイルコントロールの下あたり */
-    right: 10px;
-    width: 280px; /* 幅を調整 */
-    background-color: rgba(40, 40, 50, 0.85); /* 少し濃い背景 */
+/* === XML編集パネル === */
+#xml-edit-panel {
+    position: fixed;
+    top: 15px; /* 画面上部からの距離 (情報表示と同じ高さ) */
+    right: 88px; /* 右ツールバーとの重なりを避ける距離 */
+    width: 280px; /* パネル幅 */
+    background-color: rgba(40, 40, 50, 0.9);
     padding: 15px;
-    border-radius: 5px;
+    border-radius: 10px;
     border: 1px solid #555;
     color: #eee;
-    font-size: 0.9em;
-    max-height: calc(100vh - 80px); /* 高さ制限 */
-    overflow-y: auto; /* 内容が多い場合はスクロール */
-    z-index: 10; /* 他のUIと同程度 */
+    font-size: 14px;
+    max-height: calc(100vh - 30px); /* 画面高さから上下マージンを引いた最大高さ */
+    overflow: hidden; /* 格納時に中身がはみ出ないように */
+    z-index: 9; /* ツールバーより少し後ろ */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    transition: height 0.3s ease-in-out, padding 0.3s ease-in-out; /* 格納アニメーション */
+    height: auto; /* 通常時の高さはコンテンツに合わせる */
 }
-
-.edit-panel h4 {
+/* XML編集パネル格納時のスタイル */
+#xml-edit-panel.collapsed {
+    height: 40px; /* 格納時の高さ (タイトルが見える程度) */
+    padding-top: 5px; /* 上下パディングを縮小 */
+    padding-bottom: 5px;
+}
+/* 格納時に内部のセクションと情報を非表示 */
+#xml-edit-panel.collapsed .edit-section,
+#xml-edit-panel.collapsed .info-text {
+    display: none;
+}
+/* パネルタイトル */
+#xml-edit-panel h4 {
     margin-top: 0;
     margin-bottom: 15px;
     border-bottom: 1px solid #666;
     padding-bottom: 5px;
-    color: lightskyblue; /* 見出しの色 */
+    color: lightskyblue;
+    transition: margin 0.3s ease-in-out;
+    position: relative; /* 格納ボタンの配置基準 */
 }
+/* 格納時のタイトルスタイル調整 */
+ #xml-edit-panel.collapsed h4 {
+     margin-bottom: 0; /* 下マージン削除 */
+     border-bottom: none; /* 下線削除 */
+ }
+/* XMLパネル格納ボタン */
+#toggle-xml-panel {
+     position: absolute; /* タイトル右上に絶対配置 */
+     top: -5px;
+     right: -5px;
+     background: rgba(100, 100, 110, 0.8);
+     color: #ccc;
+     border: none;
+     border-radius: 50%; /* 円形 */
+     width: 24px;
+     height: 24px;
+     font-size: 16px;
+     line-height: 24px; /* アイコン文字を垂直中央揃え */
+     text-align: center; /* 水平中央揃え */
+     cursor: pointer;
+     transition: transform 0.3s ease-in-out; /* アイコン回転アニメーション */
+ }
+ #toggle-xml-panel:hover { background: rgba(120, 120, 130, 0.9); }
+ /* 格納時にアイコンを180度回転 */
+ #xml-edit-panel.collapsed #toggle-xml-panel {
+     transform: rotate(180deg);
+ }
+/* XMLパネル内入力要素スタイル */
+.edit-section { margin-bottom: 15px; }
+.edit-section label { display: block; margin-bottom: 5px; font-weight: bold; color: #ccc; }
+.vector3-input { display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; }
+.vector3-input input[type="number"] { width: 100%; box-sizing: border-box; }
+.matrix3x3-input { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.matrix3x3-input div { display: flex; flex-direction: column; gap: 4px; }
+.matrix3x3-input input[type="number"] { width: 100%; box-sizing: border-box; text-align: right; padding: 3px; }
+#xml-edit-panel input[type="number"] { background-color: #2a2a30; color: #eee; border: 1px solid #555; border-radius: 3px; padding: 4px; font-family: monospace; }
+#xml-edit-panel input[type="number"]:focus { outline: none; border-color: lightskyblue; background-color: #333; }
+#xml-edit-panel input[type="number"]:disabled { background-color: #444; color: #888; cursor: not-allowed; }
+.edit-panel input[type="number"].multiple-selected::placeholder { color: #888; font-style: italic; text-align: center; }
+.info-text { font-size: 0.85em; color: #aaa; margin-top: 10px; min-height: 1em; }
 
-.edit-section {
-    margin-bottom: 15px;
-}
-
-.edit-section label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
-    color: #ccc; /* ラベルの色 */
-}
-
-/* Vector3入力スタイル */
-.vector3-input {
-    display: grid;
-    grid-template-columns: auto 1fr; /* ラベルと入力 */
-    gap: 5px 8px; /* 縦と横の隙間 */
-    align-items: center;
-}
-.vector3-input input[type="number"] {
-    width: 100%;
-    box-sizing: border-box; /* paddingを含めて幅計算 */
-}
-
-/* Matrix3x3入力スタイル */
-.matrix3x3-input {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr); /* 3列均等 */
-    gap: 4px;
-}
-.matrix3x3-input div { /* 各列のコンテナ */
+/* === インベントリパネル === */
+#inventory-panel {
+    position: fixed;
+    bottom: 20px; /* 下ツールバーの通常位置に合わせる */
+    left: 50%; /* 水平中央 */
+    transform: translateX(-50%) translateY(calc(100% + 20px)); /* 初期状態は下ツールバーよりさらに下に隠す */
+    width: 66vw; /* 画面幅の2/3 */
+    max-width: 600px; /* 最大幅 */
+    height: 60vh; /* 画面高さの60% */
+    background-color: rgba(40, 40, 50, 0.9); /* 少し透過 */
+    border-radius: 20px; /* 角丸 */
+    box-shadow: 0 0 15px rgba(0,0,0,0.5); /* 影 */
+    z-index: 20; /* 最前面 */
+    transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out; /* スライドアニメーション */
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.matrix3x3-input input[type="number"] {
-    width: 100%;
+    flex-direction: column; /* 内部要素を縦に */
+    padding: 15px;
     box-sizing: border-box;
-    text-align: right;
-    padding: 3px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    opacity: 0; /* 初期状態は透明 */
+    pointer-events: none; /* 非表示時は操作不可 */
 }
-
-/* 入力フィールド共通スタイル */
-.edit-panel input[type="number"] {
-    background-color: #2a2a30; /* 少し明るい背景 */
+/* インベントリ表示時のスタイル */
+#inventory-panel.visible {
+    transform: translateX(-50%) translateY(0); /* スライドイン */
+    opacity: 1; /* 不透明にする */
+    pointer-events: auto; /* 操作可能にする */
+}
+/* インベントリ検索ボックス */
+#inventory-search {
+    width: calc(100% - 10px); /* パディング考慮 */
+    padding: 10px 15px;
+    margin-bottom: 15px;
+    border-radius: 8px;
+    border: 1px solid #666;
+    background-color: #2a2a30;
     color: #eee;
-    border: 1px solid #555;
-    border-radius: 3px;
-    padding: 4px;
-    font-family: monospace; /* 等幅フォント */
+    font-size: 16px;
+    box-sizing: border-box;
 }
-.edit-panel input[type="number"]:focus {
-    outline: none;
-    border-color: lightskyblue;
-    background-color: #333;
+/* インベントリのスクロール領域 */
+.inventory-content {
+    flex-grow: 1; /* 残りの高さを埋める */
+    overflow-y: auto; /* 縦スクロール可能に */
+    /* スクロールバーのスタイル */
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: #666 #333; /* Firefox */
 }
-.edit-panel input[type="number"]:disabled {
-    background-color: #444;
-    color: #888;
-    cursor: not-allowed;
+.inventory-content::-webkit-scrollbar { width: 8px; } /* Chrome/Safari */
+.inventory-content::-webkit-scrollbar-track { background: #333; border-radius: 4px;}
+.inventory-content::-webkit-scrollbar-thumb { background-color: #666; border-radius: 4px; border: 2px solid #333; }
+/* インベントリのタグ見出し */
+.inventory-tag-group h4 { margin: 15px 0 10px 5px; color: lightskyblue; font-size: 16px; border-bottom: 1px solid #555; padding-bottom: 5px; }
+/* インベントリのアイコン配置グリッド */
+.inventory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); /* 列数を自動調整 */ gap: 15px; padding: 0 5px 15px 5px; }
+/* インベントリアイテム */
+.inventory-item { background-color: rgba(70, 70, 80, 0.8); border: 1px solid #666; border-radius: 8px; aspect-ratio: 1 / 1; /* 正方形 */ display: flex; justify-content: center; align-items: center; font-size: 24px; cursor: pointer; transition: background-color 0.2s, transform 0.1s; position: relative; }
+.inventory-item:active { transform: scale(0.95); }
+.inventory-item.active { background-color: #50e3c2; border-color: #7af0d6; box-shadow: 0 0 8px rgba(80, 227, 194, 0.5); }
+
+/* === インベントリ外タップ用オーバーレイ === */
+#inventory-overlay {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.3); /* 半透明の黒 */
+    z-index: 19; /* インベントリのすぐ後ろ */
+    display: none; /* 初期非表示 */
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
 }
-/* 複数選択時のプレースホルダー用スタイル */
-.edit-panel input[type="number"].multiple-selected::placeholder {
-    color: #888;
-    font-style: italic;
-    text-align: center; /* 中央揃え */
+/* オーバーレイ表示時のスタイル */
+#inventory-overlay.visible {
+    display: block;
+    opacity: 1;
 }
 
-
-.info-text {
-    font-size: 0.85em;
-    color: #aaa;
-    margin-top: 10px;
-    min-height: 1em; /* 情報がない場合でも高さを確保 */
+/* === 範囲選択十字キー === */
+#range-adjust-dpad {
+    position: fixed;
+    bottom: 30px; /* 画面下からの距離 */
+    right: 30px; /* 画面右からの距離 */
+    width: 120px; /* 十字キー全体の幅 */
+    height: 120px; /* 十字キー全体の高さ */
+    display: none; /* 初期非表示 (範囲選択モードで表示) */
+    grid-template-columns: 1fr 1fr 1fr; /* 3x3のグリッド */
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 5px; /* ボタン間の隙間 */
+    z-index: 10;
 }
+/* 十字キーボタン共通スタイル */
+#range-adjust-dpad button {
+    background-color: rgba(70, 70, 80, 0.8);
+    color: #eee;
+    border: 1px solid #666;
+    border-radius: 8px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+#range-adjust-dpad button:active { background-color: rgba(90, 90, 100, 0.9); transform: scale(0.95); }
+/* 各ボタンのグリッド配置 */
+#dpad-up    { grid-column: 2 / 3; grid-row: 1 / 2; } /* 上ボタン */
+#dpad-left  { grid-column: 1 / 2; grid-row: 2 / 3; } /* 左ボタン */
+#dpad-right { grid-column: 3 / 4; grid-row: 2 / 3; } /* 右ボタン */
+#dpad-down  { grid-column: 2 / 3; grid-row: 3 / 4; } /* 下ボタン */
+/* 中央 (grid-column: 2 / 3; grid-row: 2 / 3;) は空き */

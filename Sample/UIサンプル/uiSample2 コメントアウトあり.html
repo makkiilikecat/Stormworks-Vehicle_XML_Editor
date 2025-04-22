@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stormworks Vehicle Editor UI Sample (Rev. 3 - Commented)</title>
+    <style>
+        /* === 基本スタイル === */
+        body {
+            margin: 0; /* ブラウザデフォルトのマージンを除去 */
+            overflow: hidden; /* スクロールバーを常に非表示 */
+            background-color: #333; /* 背景色 */
+            font-family: sans-serif; /* 基本フォント */
+            color: #eee; /* 基本文字色 */
+            /* タッチ操作による意図しない選択やメニュー表示を抑制 */
+            user-select: none;
+            -webkit-user-select: none; /* Safari用 */
+            -webkit-touch-callout: none; /* iOSでの長押しメニュー抑制 */
+        }
+
+        /* 3Dビュー用Canvas */
+        #three-canvas {
+            position: fixed; /* 画面に固定 */
+            top: 0;
+            left: 0;
+            display: block; /* 不要な隙間を削除 */
+            width: 100vw; /* 画面幅全体 */
+            height: 100vh; /* 画面高さ全体 */
+            z-index: 0; /* UI要素より後ろに配置 */
+        }
+
+        /* === ツールバー共通スタイル === */
+        .toolbar {
+            position: fixed; /* 画面に固定 */
+            background-color: rgba(50, 50, 60, 0.85); /* 半透明の背景色 */
+            border-radius: 15px; /* 角丸 */
+            padding: 10px; /* 内側の余白 */
+            display: flex; /* 子要素をフレックスボックスで配置 */
+            align-items: center; /* 子要素を垂直方向中央揃え */
+            z-index: 10; /* 他のUI要素より手前に表示 */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3); /* 影 */
+            backdrop-filter: blur(5px); /* すりガラス効果 (対応ブラウザ) */
+            -webkit-backdrop-filter: blur(5px); /* Safari用 */
+            transition: transform 0.3s ease-in-out; /* インベントリ表示時の移動アニメーション用 */
+        }
+
+        /* 左ツールバー */
+        #left-toolbar {
+            left: 10px; /* 画面左端からの距離 */
+            top: 50%; /* 上から50%の位置 */
+            transform: translateY(-50%); /* Y軸方向に自身の高さの半分だけ上に移動して中央揃え */
+            flex-direction: column; /* 子要素を縦に並べる */
+            gap: 15px; /* ボタン間の垂直方向の隙間 */
+        }
+        /* 右ツールバー */
+        #right-toolbar {
+            right: 10px; /* 画面右端からの距離 */
+            top: 50%;
+            transform: translateY(-50%);
+            flex-direction: column;
+            gap: 15px;
+        }
+        /* 下ツールバー (ホットバー) */
+        #bottom-toolbar {
+            bottom: 20px; /* 画面下からの距離 */
+            left: 50%; /* 左から50%の位置 */
+            transform: translateX(-50%); /* X軸方向に自身の幅の半分だけ左に移動して中央揃え */
+            flex-direction: row; /* 子要素を横に並べる */
+            gap: 10px; /* ボタン間の水平方向の隙間 */
+            padding: 8px 15px; /* 内側の余白を調整 */
+        }
+        /* インベントリ表示時に下ツールバーを少し下げるクラス */
+        #bottom-toolbar.lowered {
+            transform: translateX(-50%) translateY(100px); /* Y方向に下に移動 */
+        }
+
+        /* === ツールバーボタン・ホットバーアイテム共通 === */
+        .toolbar-button, .hotbar-item {
+            background-color: rgba(70, 70, 80, 0.9); /* ボタン背景色 */
+            color: #eee; /* 文字色 */
+            border: 1px solid #666; /* 枠線 */
+            border-radius: 8px; /* 角丸 */
+            padding: 12px; /* 内側余白 (タッチしやすく) */
+            font-size: 18px; /* アイコン用文字サイズ */
+            cursor: pointer; /* カーソルをポインターに */
+            transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s; /* アニメーション効果 */
+            display: flex; /* アイコン文字を中央揃えするため */
+            justify-content: center; /* 水平中央揃え */
+            align-items: center; /* 垂直中央揃え */
+            min-width: 44px; /* タッチターゲットの最小幅 */
+            min-height: 44px; /* タッチターゲットの最小高さ */
+            flex-shrink: 0; /* ホットバーでアイテムが縮まないように */
+        }
+        /* タッチ/クリック時のスタイル */
+        .toolbar-button:active, .hotbar-item:active {
+            background-color: rgba(90, 90, 100, 0.9); /* 少し明るい背景色 */
+            transform: scale(0.95); /* 少し小さくする */
+        }
+
+        /* === アクティブ状態のスタイル === */
+        /* 共通ハイライト (対称軸ボタンなど) */
+        .toolbar-button.active, .hotbar-item.active {
+             box-shadow: 0 0 8px rgba(80, 227, 194, 0.5); /* 共通のアクティブ色 (例: 緑系の光彩) */
+             border-color: #7af0d6; /* 枠線の色 */
+        }
+        /* モード選択ボタンのアクティブ色 */
+        .toolbar-button.mode-button.active {
+            background-color: #4a90e2; /* 背景色 (青系) */
+            border-color: #7ab3f0;
+            box-shadow: 0 0 8px rgba(74, 144, 226, 0.5); /* 青系の光彩 */
+        }
+        /* ホットバーのアクティブ色 */
+         .hotbar-item.active {
+             background-color: #50e3c2; /* 背景色 (緑系) */
+         }
+        /* 対称軸ボタンのアクティブ色 */
+        .toolbar-button[data-action^="SYMMETRY"].active {
+            background-color: #e27d4a; /* 背景色 (オレンジ系) */
+            border-color: #f0a77a;
+            box-shadow: 0 0 8px rgba(226, 125, 74, 0.5); /* オレンジ系の光彩 */
+        }
+
+        /* アイコン用テキスト */
+        .icon-text { font-weight: bold; }
+
+        /* === 左上情報表示 === */
+        #info-display {
+            position: fixed;
+            top: 15px;
+            left: 15px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 13px; /* 文字を少し小さく */
+            z-index: 10;
+            line-height: 1.4; /* 行間調整 */
+        }
+        /* サイズ表示用テーブル */
+        #info-display table {
+            border-spacing: 5px 0; /* セル間の隙間 (水平5px, 垂直0) */
+            margin: 5px 0; /* 上下マージン */
+            font-family: monospace; /* 等幅フォント */
+        }
+        #info-display td:first-child { text-align: right; color: #aaa; } /* 軸ラベル */
+        #info-display td:last-child { font-weight: bold; } /* 値 */
+        /* FPS表示エリア */
+        #fps-display { margin-top: 5px; }
+        /* バッテリーセーブボタン */
+        #battery-save-button {
+            background-color: #555; /* デフォルト背景 */
+            color: #eee;
+            border: 1px solid #888;
+            border-radius: 5px;
+            padding: 3px 8px; /* 小さめのパディング */
+            font-size: 11px; /* 小さいフォント */
+            cursor: pointer;
+            margin-top: 5px;
+            transition: background-color 0.2s; /* 背景色変化アニメーション */
+            /* ボタン共通スタイルを上書き */
+            min-width: auto;
+            min-height: auto;
+            height: auto;
+            width: auto;
+        }
+        /* FPS制限状態に応じた背景色 */
+        #battery-save-button.fps-60 { background-color: #4a90e2; } /* 60FPS制限 */
+        #battery-save-button.fps-30 { background-color: #e27d4a; } /* 30FPS制限 */
+
+        /* === 左下カメラ移動スティック === */
+        #camera-stick {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            width: 180px; /* サイズを大きく */
+            height: 180px;
+            background-color: rgba(0, 0, 0, 0.4);
+            border-radius: 50%; /* 円形 */
+            display: flex; /* ハンドルを中央揃えするため */
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            transition: opacity 0.3s, transform 0.3s; /* 表示/非表示アニメーション */
+        }
+        /* スティックのつまみ */
+        #stick-handle {
+            width: 90px; /* サイズを大きく */
+            height: 90px;
+            background-color: rgba(200, 200, 200, 0.8);
+            border-radius: 50%;
+            cursor: grab; /* カーソル形状 */
+            position: absolute; /* JSで位置を制御 */
+        }
+        /* スティック非表示時のスタイル */
+        #camera-stick.hidden {
+            opacity: 0; /* 透明にする */
+            transform: scale(0.5); /* 小さくする */
+            pointer-events: none; /* 操作を受け付けないようにする */
+        }
+
+        /* === XML編集パネル === */
+        #xml-edit-panel {
+            position: fixed;
+            top: 15px; /* 画面上部からの距離 (情報表示と同じ高さ) */
+            right: 88px; /* 右ツールバーとの重なりを避ける距離 */
+            width: 280px; /* パネル幅 */
+            background-color: rgba(40, 40, 50, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #555;
+            color: #eee;
+            font-size: 14px;
+            max-height: calc(100vh - 30px); /* 画面高さから上下マージンを引いた最大高さ */
+            overflow: hidden; /* 格納時に中身がはみ出ないように */
+            z-index: 9; /* ツールバーより少し後ろ */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            transition: height 0.3s ease-in-out, padding 0.3s ease-in-out; /* 格納アニメーション */
+            height: auto; /* 通常時の高さはコンテンツに合わせる */
+        }
+        /* XML編集パネル格納時のスタイル */
+        #xml-edit-panel.collapsed {
+            height: 40px; /* 格納時の高さ (タイトルが見える程度) */
+            padding-top: 5px; /* 上下パディングを縮小 */
+            padding-bottom: 5px;
+        }
+        /* 格納時に内部のセクションと情報を非表示 */
+        #xml-edit-panel.collapsed .edit-section,
+        #xml-edit-panel.collapsed .info-text {
+            display: none;
+        }
+        /* パネルタイトル */
+        #xml-edit-panel h4 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #666;
+            padding-bottom: 5px;
+            color: lightskyblue;
+            transition: margin 0.3s ease-in-out;
+            position: relative; /* 格納ボタンの配置基準 */
+        }
+        /* 格納時のタイトルスタイル調整 */
+         #xml-edit-panel.collapsed h4 {
+             margin-bottom: 0; /* 下マージン削除 */
+             border-bottom: none; /* 下線削除 */
+         }
+        /* XMLパネル格納ボタン */
+        #toggle-xml-panel {
+             position: absolute; /* タイトル右上に絶対配置 */
+             top: -5px;
+             right: -5px;
+             background: rgba(100, 100, 110, 0.8);
+             color: #ccc;
+             border: none;
+             border-radius: 50%; /* 円形 */
+             width: 24px;
+             height: 24px;
+             font-size: 16px;
+             line-height: 24px; /* アイコン文字を垂直中央揃え */
+             text-align: center; /* 水平中央揃え */
+             cursor: pointer;
+             transition: transform 0.3s ease-in-out; /* アイコン回転アニメーション */
+         }
+         #toggle-xml-panel:hover { background: rgba(120, 120, 130, 0.9); }
+         /* 格納時にアイコンを180度回転 */
+         #xml-edit-panel.collapsed #toggle-xml-panel {
+             transform: rotate(180deg);
+         }
+        /* XMLパネル内入力要素スタイル (変更なし) */
+        .edit-section { margin-bottom: 15px; } .edit-section label { display: block; margin-bottom: 5px; font-weight: bold; color: #ccc; } .vector3-input { display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; } .vector3-input input[type="number"] { width: 100%; box-sizing: border-box; } .matrix3x3-input { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; } .matrix3x3-input div { display: flex; flex-direction: column; gap: 4px; } .matrix3x3-input input[type="number"] { width: 100%; box-sizing: border-box; text-align: right; padding: 3px; } #xml-edit-panel input[type="number"] { background-color: #2a2a30; color: #eee; border: 1px solid #555; border-radius: 3px; padding: 4px; font-family: monospace; } #xml-edit-panel input[type="number"]:focus { outline: none; border-color: lightskyblue; background-color: #333; } .info-text { font-size: 0.85em; color: #aaa; margin-top: 10px; min-height: 1em; }
+
+        /* === インベントリパネル === */
+        #inventory-panel {
+            position: fixed;
+            bottom: 20px; /* 下ツールバーの通常位置に合わせる */
+            left: 50%; /* 水平中央 */
+            transform: translateX(-50%) translateY(calc(100% + 20px)); /* 初期状態は下ツールバーよりさらに下に隠す */
+            width: 66vw; /* 画面幅の2/3 */
+            max-width: 600px; /* 最大幅 */
+            height: 60vh; /* 画面高さの60% */
+            background-color: rgba(40, 40, 50, 0.9); /* 少し透過 */
+            border-radius: 20px; /* 角丸 */
+            box-shadow: 0 0 15px rgba(0,0,0,0.5); /* 影 */
+            z-index: 20; /* 最前面 */
+            transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out; /* スライドアニメーション */
+            display: flex;
+            flex-direction: column; /* 内部要素を縦に */
+            padding: 15px;
+            box-sizing: border-box;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            opacity: 0; /* 初期状態は透明 */
+            pointer-events: none; /* 非表示時は操作不可 */
+        }
+        /* インベントリ表示時のスタイル */
+        #inventory-panel.visible {
+            transform: translateX(-50%) translateY(0); /* スライドイン */
+            opacity: 1; /* 不透明にする */
+            pointer-events: auto; /* 操作可能にする */
+        }
+        /* インベントリ検索ボックス */
+        #inventory-search {
+            width: calc(100% - 10px); /* パディング考慮 */
+            padding: 10px 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            border: 1px solid #666;
+            background-color: #2a2a30;
+            color: #eee;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        /* インベントリのスクロール領域 */
+        .inventory-content {
+            flex-grow: 1; /* 残りの高さを埋める */
+            overflow-y: auto; /* 縦スクロール可能に */
+            /* スクロールバーのスタイル */
+            scrollbar-width: thin; /* Firefox */
+            scrollbar-color: #666 #333; /* Firefox */
+        }
+        .inventory-content::-webkit-scrollbar { width: 8px; } /* Chrome/Safari */
+        .inventory-content::-webkit-scrollbar-track { background: #333; border-radius: 4px;}
+        .inventory-content::-webkit-scrollbar-thumb { background-color: #666; border-radius: 4px; border: 2px solid #333; }
+        /* インベントリのタグ見出し */
+        .inventory-tag-group h4 { margin: 15px 0 10px 5px; color: lightskyblue; font-size: 16px; border-bottom: 1px solid #555; padding-bottom: 5px; }
+        /* インベントリのアイコン配置グリッド */
+        .inventory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); /* 列数を自動調整 */ gap: 15px; padding: 0 5px 15px 5px; }
+        /* インベントリアイテム */
+        .inventory-item { background-color: rgba(70, 70, 80, 0.8); border: 1px solid #666; border-radius: 8px; aspect-ratio: 1 / 1; /* 正方形 */ display: flex; justify-content: center; align-items: center; font-size: 24px; cursor: pointer; transition: background-color 0.2s, transform 0.1s; position: relative; }
+        .inventory-item:active { transform: scale(0.95); }
+        .inventory-item.active { background-color: #50e3c2; border-color: #7af0d6; box-shadow: 0 0 8px rgba(80, 227, 194, 0.5); }
+
+        /* === インベントリ外タップ用オーバーレイ === */
+        #inventory-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.3); /* 半透明の黒 */
+            z-index: 19; /* インベントリのすぐ後ろ */
+            display: none; /* 初期非表示 */
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+        /* オーバーレイ表示時のスタイル */
+        #inventory-overlay.visible {
+            display: block;
+            opacity: 1;
+        }
+
+        /* === 範囲選択十字キー === */
+        #range-adjust-dpad {
+            position: fixed;
+            bottom: 30px; /* 画面下からの距離 */
+            right: 30px; /* 画面右からの距離 */
+            width: 120px; /* 十字キー全体の幅 */
+            height: 120px; /* 十字キー全体の高さ */
+            display: none; /* 初期非表示 (範囲選択モードで表示) */
+            grid-template-columns: 1fr 1fr 1fr; /* 3x3のグリッド */
+            grid-template-rows: 1fr 1fr 1fr;
+            gap: 5px; /* ボタン間の隙間 */
+            z-index: 10;
+        }
+        /* 十字キーボタン共通スタイル */
+        #range-adjust-dpad button {
+            background-color: rgba(70, 70, 80, 0.8);
+            color: #eee;
+            border: 1px solid #666;
+            border-radius: 8px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
+        }
+        #range-adjust-dpad button:active { background-color: rgba(90, 90, 100, 0.9); transform: scale(0.95); }
+        /* 各ボタンのグリッド配置 */
+        #dpad-up    { grid-column: 2 / 3; grid-row: 1 / 2; } /* 上ボタン */
+        #dpad-left  { grid-column: 1 / 2; grid-row: 2 / 3; } /* 左ボタン */
+        #dpad-right { grid-column: 3 / 4; grid-row: 2 / 3; } /* 右ボタン */
+        #dpad-down  { grid-column: 2 / 3; grid-row: 3 / 4; } /* 下ボタン */
+        /* 中央 (grid-column: 2 / 3; grid-row: 2 / 3;) は空き */
+
+    </style>
+</head>
+<body>
+    <canvas id="three-canvas"></canvas>
+    <div id="inventory-overlay"></div>
+
+    <div id="left-toolbar" class="toolbar">
+        {/* 通常モード(配置)ボタン */}
+        <button class="toolbar-button mode-button" data-mode="NORMAL" title="通常モード"><span class="icon-text">➕</span></button>
+        {/* 削除モードボタン */}
+        <button class="toolbar-button mode-button" data-mode="DELETE" title="削除モード"><span class="icon-text">🗑️</span></button>
+        {/* XML編集モードボタン */}
+        <button class="toolbar-button mode-button" data-mode="XML_EDIT" title="XML編集モード"><span class="icon-text">✏️</span></button>
+        {/* 範囲選択モードボタン */}
+        <button class="toolbar-button mode-button" data-mode="RANGE_SELECT" title="範囲選択モード"><span class="icon-text">🔲</span></button>
+        {/* ペイントモードボタン (機能は未実装) */}
+        <button class="toolbar-button mode-button" data-mode="PAINT" title="ペイントモード"><span class="icon-text">🎨</span></button>
+        {/* 区切り線 */}
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        {/* カメラ移動スティックの表示/非表示ボタン */}
+        <button id="toggle-stick-button" class="toolbar-button active" title="移動スティック表示切替"><span class="icon-text">🕹️</span></button>
+    </div>
+
+    <div id="right-toolbar" class="toolbar">
+        {/* --- 範囲選択モード時のみ表示されるボタン --- */}
+        <button class="toolbar-button range-only" data-action="COPY" title="コピー" style="display: none;"><span class="icon-text">📄</span></button>
+        <button class="toolbar-button range-only" data-action="CUT" title="カット" style="display: none;"><span class="icon-text">✂️</span></button>
+        <button class="toolbar-button range-only" data-action="PASTE" title="ペースト" style="display: none;"><span class="icon-text">📋</span></button>
+        <hr class="range-only" style="width: 80%; border-color: #666; margin: 5px 0; display: none;">
+        {/* --- ここまで範囲選択モード用 --- */}
+        {/* 対称編集切り替えボタン */}
+        <button class="toolbar-button" data-action="SYMMETRY_X" title="X軸対称"><span class="icon-text">X</span></button>
+        <button class="toolbar-button" data-action="SYMMETRY_Y" title="Y軸対称"><span class="icon-text">Y</span></button>
+        <button class="toolbar-button" data-action="SYMMETRY_Z" title="Z軸対称"><span class="icon-text">Z</span></button>
+        {/* 区切り線 */}
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        {/* 保存/読込ボタン */}
+        <button class="toolbar-button" data-action="SAVE" title="保存"><span class="icon-text">💾</span></button>
+        <button class="toolbar-button" data-action="LOAD" title="読込"><span class="icon-text">📂</span></button>
+        {/* 区切り線 */}
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        {/* フルスクリーン切り替えボタン */}
+        <button id="fullscreen-button" class="toolbar-button" title="フルスクリーン切替"><span class="icon-text">⛶</span></button>
+    </div>
+
+    <div id="bottom-toolbar" class="toolbar">
+        {/* ホットバーアイテム (ダミー) */}
+        <button class="hotbar-item" data-block-id="0" title="ブロック1"><span class="icon-text">🧱</span></button>
+        <button class="hotbar-item" data-block-id="1" title="ブロック2"><span class="icon-text">🔩</span></button>
+        <button class="hotbar-item" data-block-id="2" title="ブロック3"><span class="icon-text">⚙️</span></button>
+        <button class="hotbar-item" data-block-id="3" title="ブロック4"><span class="icon-text">💡</span></button>
+        <button class="hotbar-item" data-block-id="4" title="ブロック5"><span class="icon-text">🔺</span></button>
+        {/* 区切り線 */}
+        <div style="width: 1px; background-color: #666; margin: 0 5px; height: 30px;"></div>
+        {/* インベントリ開閉ボタン */}
+        <button id="toggle-inventory-button" class="toolbar-button" title="インベントリ開閉"><span class="icon-text">🎒</span></button>
+    </div>
+
+    <div id="info-display">
+        {/* 質量・コスト (ダミー) */}
+        <div>質量: 1234 kg</div>
+        <div>コスト: $5678</div>
+        {/* ビークルサイズ表示 (ダミー) */}
+        <table>
+             <tr><td>X:</td><td><span id="size-x">15</span> ブロック (<span id="size-x-m">3.75</span>m)</td></tr>
+             <tr><td>Y:</td><td><span id="size-y">8</span> ブロック (<span id="size-y-m">2.00</span>m)</td></tr>
+             <tr><td>Z:</td><td><span id="size-z">22</span> ブロック (<span id="size-z-m">5.50</span>m)</td></tr>
+        </table>
+        {/* FPS表示 */}
+        <div id="fps-display">FPS: --</div>
+        {/* バッテリーセーブ (FPS制限) ボタン */}
+        <button id="battery-save-button" class="toolbar-button fps-unlimited" title="FPS制限切替 (∞ > 60 > 30)">∞</button>
+    </div>
+
+    <div id="camera-stick">
+        <div id="stick-handle"></div>
+    </div>
+
+    <div id="xml-edit-panel" style="display: none;">
+        {/* タイトルと格納ボタン */}
+        <h4>
+            XML編集 (選択ブロック)
+            <button id="toggle-xml-panel" title="パネルを格納/展開">^</button>
+        </h4>
+        {/* 座標入力セクション */}
+        <div class="edit-section">
+            <label>座標 (vp):</label>
+            <div class="vector3-input">
+                X:<input type="number" step="1" id="edit-vp-x">
+                Y:<input type="number" step="1" id="edit-vp-y">
+                Z:<input type="number" step="1" id="edit-vp-z">
+            </div>
+        </div>
+        {/* 回転行列入力セクション */}
+        <div class="edit-section">
+            <label>回転行列 (r):</label>
+            <div class="matrix3x3-input">
+                <div><input type="number" step="1" id="edit-r-11"><input type="number" step="1" id="edit-r-21"><input type="number" step="1" id="edit-r-31"></div>
+                <div><input type="number" step="1" id="edit-r-12"><input type="number" step="1" id="edit-r-22"><input type="number" step="1" id="edit-r-32"></div>
+                <div><input type="number" step="1" id="edit-r-13"><input type="number" step="1" id="edit-r-23"><input type="number" step="1" id="edit-r-33"></div>
+            </div>
+        </div>
+        {/* 情報表示テキスト */}
+         <div id="xml-edit-info" class="info-text">ブロックを選択してください。</div>
+    </div>
+
+    <div id="inventory-panel">
+        {/* 検索ボックス */}
+        <input type="search" id="inventory-search" placeholder="ブロック名を検索...">
+        {/* スクロール可能コンテンツ */}
+        <div class="inventory-content">
+            {/* ブロックカテゴリ見出し */}
+            <div class="inventory-tag-group">
+                <h4>基本ブロック</h4>
+                {/* ブロックアイコンのグリッド (ダミー) */}
+                <div class="inventory-grid">
+                    <div class="inventory-item" data-inv-id="block_1x1" title="ブロック"><span class="icon-text">🧱</span></div>
+                    <div class="inventory-item" data-inv-id="wedge_1x1" title="ウェッジ"><span class="icon-text">◤</span></div>
+                    <div class="inventory-item" data-inv-id="pyramid_1x1" title="ピラミッド"><span class="icon-text">△</span></div>
+                    <div class="inventory-item" data-inv-id="block_1x2" title="ブロック 1x2"><span class="icon-text">🧱<small>2</small></span></div>
+                    <div class="inventory-item" data-inv-id="block_1x4" title="ブロック 1x4"><span class="icon-text">🧱<small>4</small></span></div>
+                    <div class="inventory-item" data-inv-id="corner_1x1" title="コーナー"><span class="icon-text">◥</span></div>
+                </div>
+            </div>
+             {/* 別のカテゴリ */}
+             <div class="inventory-tag-group">
+                <h4>動力</h4>
+                <div class="inventory-grid">
+                    <div class="inventory-item" data-inv-id="engine_small" title="小型エンジン"><span class="icon-text">⚙️<small>S</small></span></div>
+                    <div class="inventory-item" data-inv-id="engine_med" title="中型エンジン"><span class="icon-text">⚙️<small>M</small></span></div>
+                    <div class="inventory-item" data-inv-id="engine_large" title="大型エンジン"><span class="icon-text">⚙️<small>L</small></span></div>
+                    <div class="inventory-item" data-inv-id="motor_electric" title="電気モーター"><span class="icon-text">⚡</span></div>
+                    <div class="inventory-item" data-inv-id="propeller_small" title="小型プロペラ"><span class="icon-text">🍥<small>S</small></span></div>
+                    <div class="inventory-item" data-inv-id="propeller_large" title="大型プロペラ"><span class="icon-text">🍥<small>L</small></span></div>
+                </div>
+            </div>
+             {/* さらに別のカテゴリ */}
+             <div class="inventory-tag-group">
+                <h4>その他</h4>
+                <div class="inventory-grid">
+                    <div class="inventory-item" data-inv-id="light" title="ライト"><span class="icon-text">💡</span></div>
+                    <div class="inventory-item" data-inv-id="button" title="ボタン"><span class="icon-text">🔘</span></div>
+                    <div class="inventory-item" data-inv-id="seat" title="座席"><span class="icon-text">💺</span></div>
+                    <div class="inventory-item" data-inv-id="winch" title="ウィンチ"><span class="icon-text">⚓</span></div>
+                </div>
+            </div>
+             {/* --- 必要に応じてカテゴリとアイテムを追加 --- */}
+        </div>
+    </div>
+
+    {/* 範囲選択モード用 十字キー */}
+    <div id="range-adjust-dpad">
+        <button id="dpad-up">▲</button>
+        <button id="dpad-left">◀</button>
+        <button id="dpad-right">▶</button>
+        <button id="dpad-down">▼</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.163.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // === グローバル変数・定数 ===
+        let scene, camera, renderer, controls; // Three.js 基本要素
+        let currentMode = 'NORMAL'; // 現在の編集モード ('NORMAL', 'DELETE', 'XML_EDIT', 'RANGE_SELECT', 'PAINT')
+        let selectedHotbarIndex = 0; // 選択中のホットバー番号
+        const hotbarItems = []; // ホットバーのDOM要素リスト
+        let inventoryVisible = false; // インベントリパネルが表示されているか
+        let selectedInventoryItem = null; // インベントリで選択中のDOM要素
+        let lastTapTime = 0; // ダブルタップ判定用の最終タップ時刻
+        const doubleTapDelay = 300; // ダブルタップと判定する時間閾値 (ミリ秒)
+        let xmlPanelCollapsed = false; // XML編集パネルが格納されているか
+        let stickVisible = true; // カメラ移動スティックが表示されているか
+        let clock = new THREE.Clock(); // FPS計算用のタイマー
+        let lastFrameTime = 0; // FPS制限用の前フレーム時刻
+        let targetFrameInterval = 0; // FPS制限の間隔 (0:無制限, 16.67:60fps, 33.33:30fps)
+        let fpsLimitMode = 0; // FPS制限モード (0:無制限, 1:60fps, 2:30fps)
+
+        // --- DOM要素キャッシュ --- (頻繁にアクセスする要素)
+        const cameraStick = document.getElementById('camera-stick');
+        const stickHandle = document.getElementById('stick-handle');
+        const fpsDisplay = document.getElementById('fps-display');
+        const batterySaveButton = document.getElementById('battery-save-button');
+        const bottomToolbar = document.getElementById('bottom-toolbar');
+        const inventoryPanel = document.getElementById('inventory-panel');
+        const inventoryOverlay = document.getElementById('inventory-overlay');
+        const rangeDpad = document.getElementById('range-adjust-dpad');
+        const xmlEditPanel = document.getElementById('xml-edit-panel');
+        const toggleStickButton = document.getElementById('toggle-stick-button');
+        const fullscreenButton = document.getElementById('fullscreen-button');
+
+        // --- カメラ移動スティック関連変数 ---
+        let isDraggingStick = false; // スティックをドラッグ中か
+        let stickPointerId = null; // ドラッグ中のポインター(指)のID
+        let stickStartX = 0, stickStartY = 0, stickCurrentX = 0, stickCurrentY = 0; // スティック座標
+        const stickMaxDistance = (cameraStick.offsetWidth / 2) - (stickHandle.offsetWidth / 2); // ハンドルの最大移動半径
+
+        // === 初期化処理 ===
+        function init() {
+            console.log("Initializing Application...");
+            setupThreeJS(); // Three.js環境のセットアップ
+            setupUI();      // UI要素とイベントリスナーのセットアップ
+            updateInfoDisplay(); // 初期情報表示 (サイズなど)
+            animate();      // アニメーションループ開始
+        }
+
+        // === Three.js 環境セットアップ ===
+        function setupThreeJS() {
+            // シーン作成
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x3d434f); // 背景色
+
+            // レンダラー作成
+            const canvas = document.getElementById('three-canvas');
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio); // デバイスのピクセル比に合わせる
+            renderer.setSize(window.innerWidth, window.innerHeight); // 画面サイズに合わせる
+
+            // カメラ作成
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(10, 10, 10); // 初期カメラ位置
+            camera.lookAt(0, 0, 0); // 原点を見る
+
+            // カメラコントロール作成 (OrbitControls)
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // 慣性効果
+            controls.dampingFactor = 0.1;
+            controls.screenSpacePanning = true; // パン操作を画面基準に (iPadで操作しやすい)
+            controls.minDistance = 1; // 最小ズーム距離
+            controls.maxDistance = 100; // 最大ズーム距離
+            // タッチ操作割り当て (1本指: 回転, 2本指: ズーム＆パン)
+            controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+
+            // ライト作成
+            const ambientLight = new THREE.AmbientLight(0x808080); // 環境光
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // 平行光
+            directionalLight.position.set(5, 10, 7.5);
+            scene.add(directionalLight);
+
+            // グリッドヘルパー (地面の目安)
+            const gridHelper = new THREE.GridHelper(50, 50, 0x888888, 0x666666);
+            scene.add(gridHelper);
+
+            // サンプルオブジェクト (緑のキューブ)
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+            const cube = new THREE.Mesh(geometry, material);
+            scene.add(cube);
+
+            // ウィンドウリサイズイベントに対応
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        // === UI要素とイベントリスナーのセットアップ ===
+        function setupUI() {
+            // --- 左ツールバー ---
+            // モード切替ボタン
+            document.querySelectorAll('#left-toolbar .mode-button').forEach(button => {
+                button.addEventListener('click', () => setMode(button.dataset.mode));
+            });
+            // 移動スティック表示切替ボタン
+            toggleStickButton?.addEventListener('click', toggleStickVisibility);
+            setMode('NORMAL'); // 初期モードを 'NORMAL' に設定
+
+            // --- 右ツールバー ---
+            document.querySelectorAll('#right-toolbar .toolbar-button').forEach(button => {
+                const action = button.dataset.action;
+                if (!action) { // data-actionがない場合はフルスクリーンボタンと仮定
+                     fullscreenButton?.addEventListener('click', toggleFullScreen);
+                     return;
+                }
+                // 各ボタンのクリックイベント (ダミー処理)
+                switch(action) {
+                    case 'COPY':
+                    case 'CUT':
+                    case 'PASTE':
+                        button.addEventListener('click', () => alert(`${action} Action (Range Mode - Not Implemented)`));
+                        break;
+                    case 'SYMMETRY_X':
+                    case 'SYMMETRY_Y':
+                    case 'SYMMETRY_Z':
+                        button.addEventListener('click', () => {
+                            button.classList.toggle('active');
+                            alert(`${action} Toggled (Not Implemented)`);
+                        });
+                        break;
+                    case 'SAVE':
+                    case 'LOAD':
+                        button.addEventListener('click', () => alert(`${action} Action (Not Implemented)`));
+                        break;
+                }
+            });
+
+            // --- 下ツールバー (ホットバー) ---
+            document.getElementById('bottom-toolbar').querySelectorAll('.hotbar-item').forEach((item, index) => {
+                hotbarItems.push(item); // 要素をリストに保持
+                item.addEventListener('click', () => {
+                    setSelectedHotbar(index); // ホットバー選択状態を更新
+                    setMode('NORMAL'); // ブロック選択したら自動で通常(配置)モードへ
+                });
+                if (index === selectedHotbarIndex) item.classList.add('active'); // 初期選択状態を反映
+            });
+            // インベントリ開閉ボタン
+            document.getElementById('toggle-inventory-button')?.addEventListener('click', () => toggleInventory());
+
+            // --- カメラ移動スティック ---
+            stickHandle?.addEventListener('pointerdown', onStickDown);
+            document.addEventListener('pointermove', onStickMove); // document全体で監視
+            document.addEventListener('pointerup', onStickUp);
+            document.addEventListener('pointercancel', onStickUp); // キャンセル時もUpと同じ処理
+
+            // --- XML編集パネル ---
+            document.getElementById('toggle-xml-panel')?.addEventListener('click', toggleXmlPanel);
+
+            // --- インベントリパネル ---
+            setupInventoryPanel(); // インベントリ内のイベントリスナーを設定
+            inventoryOverlay?.addEventListener('click', () => toggleInventory(false)); // オーバーレイをクリックしたら閉じる
+
+            // --- 範囲選択十字キー ---
+            document.querySelectorAll('#range-adjust-dpad button').forEach(button => {
+                 button.addEventListener('click', () => handleDpadClick(button.id));
+            });
+
+             // --- バッテリーセーブボタン ---
+             batterySaveButton?.addEventListener('click', cycleFpsLimit);
+        }
+
+        // === インベントリパネル内の設定 ===
+        function setupInventoryPanel() {
+             // インベントリアイテムのイベントリスナー設定
+             inventoryPanel?.querySelectorAll('.inventory-item').forEach(item => {
+                 // タップ(クリック)イベント
+                 item.addEventListener('click', (e) => {
+                     const now = Date.now();
+                     // 前回のタップから時間が短く、かつ同じ要素がタップされた場合 -> ダブルタップ
+                     if (now - lastTapTime < doubleTapDelay && e.target.closest('.inventory-item') === selectedInventoryItem) {
+                         toggleInventory(false); // インベントリを閉じる
+                         // console.log("Double tap detected, closing inventory.");
+                     } else {
+                         // シングルタップ -> アイテムを選択
+                         selectInventoryItem(item);
+                         setMode('NORMAL'); // ブロック選択したら自動で通常(配置)モードへ
+                         // console.log("Single tap detected, selecting item.");
+                     }
+                     lastTapTime = now; // 今回のタップ時刻を記録
+                     e.stopPropagation(); // イベントが親要素(オーバーレイなど)に伝播しないようにする
+                 });
+                 // PCでのダブルクリック操作も念のため残す (基本はタップイベントで処理)
+                 // item.addEventListener('dblclick', () => toggleInventory(false));
+            });
+            // 検索ボックスの入力イベント
+            document.getElementById('inventory-search')?.addEventListener('input', (e) => {
+                 const searchTerm = e.target.value.toLowerCase(); // 入力値を小文字に
+                 // console.log(`Searching for: ${searchTerm}`);
+                 // インベントリアイテムをフィルタリング (簡易版: 透明度変更)
+                 inventoryPanel?.querySelectorAll('.inventory-item').forEach(item => {
+                      const itemId = item.dataset.invId || ''; // data-inv-id 属性
+                      const itemTitle = item.title || itemId; // title 属性も検索対象に
+                      // IDかタイトルに検索語が含まれていたら表示、なければ半透明に
+                      const isMatch = itemId.toLowerCase().includes(searchTerm) || itemTitle.toLowerCase().includes(searchTerm);
+                      item.style.opacity = isMatch ? '1' : '0.3';
+                 });
+            });
+        }
+
+        // === 編集モード設定 ===
+        function setMode(newMode) {
+            // 有効なモード名かチェック (EditMode enum のような定数を使う方がより安全)
+            const validModes = ['NORMAL', 'DELETE', 'XML_EDIT', 'RANGE_SELECT', 'PAINT'];
+            if (!newMode || !validModes.includes(newMode) || currentMode === newMode) return; // 無効 or 変更なし
+
+            console.log(`Switching mode: ${currentMode} -> ${newMode}`);
+            currentMode = newMode; // 現在のモードを更新
+
+            // --- UI要素の状態更新 ---
+            // 左ツールバーのモードボタンのアクティブ状態を更新
+            document.querySelectorAll('#left-toolbar .mode-button').forEach(button => {
+                button.classList.toggle('active', button.dataset.mode === newMode);
+            });
+
+            // XML編集パネルの表示/非表示、および展開状態のリセット
+            const isXmlEditVisible = (newMode === 'XML_EDIT');
+            xmlEditPanel.style.display = isXmlEditVisible ? 'block' : 'none';
+            // XML編集モードになったら、強制的にパネルを展開状態にする
+            if (isXmlEditVisible && xmlPanelCollapsed) {
+                toggleXmlPanel();
+            }
+
+            // 範囲選択モード関連UI (右ツールバーの一部ボタン、十字キー) の表示/非表示
+            const isRangeSelectVisible = (newMode === 'RANGE_SELECT');
+            document.querySelectorAll('#right-toolbar .range-only').forEach(button => {
+                button.style.display = isRangeSelectVisible ? 'flex' : 'none';
+            });
+            rangeDpad.style.display = isRangeSelectVisible ? 'grid' : 'none';
+
+            // (オプション) モードによってはインベントリを強制的に閉じるなど
+            // if (newMode !== 'NORMAL' && inventoryVisible) {
+            //      toggleInventory(false);
+            // }
+        }
+
+        // === ホットバーアイテム選択 ===
+        function setSelectedHotbar(index) {
+            if (index >= 0 && index < hotbarItems.length) {
+                // 前の選択を解除
+                if (selectedHotbarIndex >= 0 && selectedHotbarIndex < hotbarItems.length) {
+                    hotbarItems[selectedHotbarIndex]?.classList.remove('active');
+                }
+                // 新しい選択を設定
+                selectedHotbarIndex = index;
+                hotbarItems[selectedHotbarIndex]?.classList.add('active');
+                console.log(`Selected hotbar item: ${index}`);
+                // TODO: 実際に配置するブロックの種類をここで更新する処理
+            }
+        }
+
+        // === インベントリパネル表示/非表示切り替え ===
+        function toggleInventory(forceState = null) {
+            // forceState が指定されていればそれに従う、なければ現在の逆にする
+            const shouldBeVisible = forceState !== null ? forceState : !inventoryVisible;
+            if (shouldBeVisible === inventoryVisible) return; // 状態が変わらなければ何もしない
+
+            inventoryPanel?.classList.toggle('visible', shouldBeVisible); // パネル本体
+            inventoryOverlay?.classList.toggle('visible', shouldBeVisible); // 背景オーバーレイ
+            bottomToolbar?.classList.toggle('lowered', shouldBeVisible); // 下ツールバー
+            inventoryVisible = shouldBeVisible; // 状態を更新
+            console.log(`Inventory toggled: ${inventoryVisible ? 'Visible' : 'Hidden'}`);
+
+            // インベントリ表示中はカメラコントロールを無効化、非表示時は有効化(スティック操作中でなければ)
+            if (controls) controls.enabled = !inventoryVisible && !isDraggingStick;
+        }
+
+        // === インベントリアイテム選択 ===
+        function selectInventoryItem(itemElement) {
+             // 前の選択を解除
+             if (selectedInventoryItem) {
+                 selectedInventoryItem.classList.remove('active');
+             }
+             // 新しい選択を設定
+             selectedInventoryItem = itemElement;
+             selectedInventoryItem?.classList.add('active');
+             const itemId = itemElement?.dataset?.invId;
+             console.log(`Selected inventory item: ${itemId}`);
+             // TODO: 実際に配置するブロックの種類をここで更新する処理
+             // 例: 配置状態管理モジュールに itemId を渡す
+             // toggleInventory(false); // 選択したら自動で閉じる場合
+        }
+
+         // === XML編集パネル 格納/展開 ===
+         function toggleXmlPanel() {
+             xmlPanelCollapsed = !xmlPanelCollapsed; // 状態を反転
+             xmlEditPanel?.classList.toggle('collapsed', xmlPanelCollapsed); // CSSクラスを付け外し
+             console.log(`XML panel toggled: ${xmlPanelCollapsed ? 'Collapsed' : 'Expanded'}`);
+         }
+
+        // === 移動スティック表示/非表示 ===
+        function toggleStickVisibility() {
+             stickVisible = !stickVisible; // 状態を反転
+             cameraStick?.classList.toggle('hidden', !stickVisible); // CSSクラスで表示/非表示
+             toggleStickButton?.classList.toggle('active', stickVisible); // ボタンのアクティブ状態更新
+             console.log(`Camera stick visibility: ${stickVisible ? 'Visible' : 'Hidden'}`);
+             // スティック非表示時にドラッグ中だったら操作を中断させる
+             if (!stickVisible && isDraggingStick && stickPointerId !== null) {
+                 onStickUp({ pointerId: stickPointerId }); // 終了処理を強制呼び出し
+             }
+        }
+
+        // === 範囲選択十字キー処理 (ダミー) ===
+        function handleDpadClick(buttonId) {
+            if (currentMode !== 'RANGE_SELECT') return; // 範囲選択モード以外では無効
+            let direction = '';
+            switch(buttonId) {
+                case 'dpad-up': direction = 'Up'; break;
+                case 'dpad-down': direction = 'Down'; break;
+                case 'dpad-left': direction = 'Left'; break;
+                case 'dpad-right': direction = 'Right'; break;
+            }
+            console.log(`Range Adjust DPAD: ${direction} (+1 block)`);
+            // TODO: ここで実際に選択範囲(Box3)を取得し、対応する方向に1ブロック分移動させ、
+            // selectionState.setSelectionRange() のような関数で状態を更新する。
+        }
+
+         // === FPS制限モード切り替え ===
+        function cycleFpsLimit() {
+             fpsLimitMode = (fpsLimitMode + 1) % 3; // 0, 1, 2 のサイクル
+             switch (fpsLimitMode) {
+                 case 0: // 無制限
+                     targetFrameInterval = 0;
+                     batterySaveButton.textContent = '∞'; // ボタン表示
+                     batterySaveButton.className = 'toolbar-button fps-unlimited'; // CSSクラス
+                     break;
+                 case 1: // 60 FPS
+                     targetFrameInterval = 1000 / 60; // 1フレームあたりの時間(ms)
+                     batterySaveButton.textContent = '60';
+                     batterySaveButton.className = 'toolbar-button fps-60 active'; // activeクラスで状態を示す
+                     break;
+                 case 2: // 30 FPS
+                     targetFrameInterval = 1000 / 30;
+                     batterySaveButton.textContent = '30';
+                     batterySaveButton.className = 'toolbar-button fps-30 active';
+                     break;
+             }
+             lastFrameTime = performance.now(); // FPS制限のタイミングリセット
+             console.log(`FPS Limit set to: ${targetFrameInterval === 0 ? 'Unlimited' : (1000 / targetFrameInterval).toFixed(0)}`);
+         }
+
+        // === フルスクリーン切り替え ===
+        function toggleFullScreen() {
+             if (!document.fullscreenElement) { // 現在フルスクリーンでない場合
+                 // フルスクリーンを要求
+                 document.documentElement.requestFullscreen()
+                     .catch(err => { // 失敗した場合のエラーハンドリング
+                         alert(`フルスクリーンモードにできませんでした: ${err.message} (${err.name})`);
+                     });
+             } else { // 現在フルスクリーン状態の場合
+                 // フルスクリーンを解除
+                 if (document.exitFullscreen) {
+                     document.exitFullscreen();
+                 }
+             }
+         }
+
+         // === 情報表示更新 (サイズはダミー) ===
+         function updateInfoDisplay() {
+             // TODO: 実際のビークルデータのバウンディングボックスなどから計算する
+             const sizeX = 15, sizeY = 8, sizeZ = 22; // ダミーのブロック数
+             document.getElementById('size-x').textContent = sizeX;
+             document.getElementById('size-x-m').textContent = (sizeX * 0.25).toFixed(2); // 1ブロック=0.25m換算
+             document.getElementById('size-y').textContent = sizeY;
+             document.getElementById('size-y-m').textContent = (sizeY * 0.25).toFixed(2);
+             document.getElementById('size-z').textContent = sizeZ;
+             document.getElementById('size-z-m').textContent = (sizeZ * 0.25).toFixed(2);
+             // 質量、コストも同様に更新
+         }
+
+        // === カメラ移動スティック イベントハンドラ ===
+        function onStickDown(event) {
+             // スティック非表示中、またはインベントリ表示中は操作開始しない
+             if (!stickVisible || inventoryVisible) return;
+             // スティック操作中はカメラコントロールを無効化
+             if (controls) controls.enabled = false;
+            isDraggingStick = true; // ドラッグ開始フラグ
+             stickPointerId = event.pointerId; // 操作中のポインターIDを保存
+            stickHandle.setPointerCapture(stickPointerId); // ポインターイベントをこの要素で捕捉
+            stickHandle.style.cursor = 'grabbing'; // カーソル変更
+            const touch = event.touches ? event.touches[0] : event; // タッチ/マウスイベントの座標取得
+            stickStartX = touch.clientX; // ドラッグ開始点のX座標
+            stickStartY = touch.clientY; // ドラッグ開始点のY座標
+            stickCurrentX = 0; stickCurrentY = 0; // ハンドルの相対位置リセット
+        }
+
+        function onStickMove(event) {
+             // ドラッグ中でない、または操作中のポインターIDが異なる、またはインベントリ表示中なら処理しない
+             if (!isDraggingStick || event.pointerId !== stickPointerId || inventoryVisible) return;
+
+            const touch = event.touches ? event.touches[0] : event;
+            // ドラッグ開始点からの移動量
+            const deltaX = touch.clientX - stickStartX;
+            const deltaY = touch.clientY - stickStartY;
+            // 移動距離と角度を計算
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            const angle = Math.atan2(deltaY, deltaX);
+            // 最大移動距離で制限
+            const clampedDistance = Math.min(distance, stickMaxDistance);
+            // ハンドルの新しい相対位置を計算
+            stickCurrentX = Math.cos(angle) * clampedDistance;
+            stickCurrentY = Math.sin(angle) * clampedDistance;
+            // ハンドルのCSS transformを更新して見た目を動かす
+            stickHandle.style.transform = `translate(${stickCurrentX}px, ${stickCurrentY}px)`;
+
+            // --- カメラ移動量の計算 ---
+            const moveSpeed = 0.05; // カメラの移動速度係数 (調整可能)
+            // スティックの傾きを正規化 (-1.0 ~ +1.0)
+            const moveXNormalized = stickCurrentX / stickMaxDistance;
+            const moveYNormalized = stickCurrentY / stickMaxDistance;
+            // カメラの前方移動量 (スティックY下方向が前方)
+            const moveForward = -moveYNormalized * moveSpeed;
+            // カメラの右方移動量 (スティックX右方向が右方)
+            const moveRight = moveXNormalized * moveSpeed;
+
+            // カメラの現在の向きから、水平な前方ベクトルと右方ベクトルを取得
+            const forwardVector = new THREE.Vector3();
+            camera.getWorldDirection(forwardVector); // カメラの前方ベクトル取得
+            forwardVector.y = 0; // Y成分を0にして水平にする
+            forwardVector.normalize(); // 正規化
+            const rightVector = new THREE.Vector3().crossVectors(camera.up, forwardVector).normalize(); // 右方ベクトル(外積)
+
+            // 移動ベクトルを計算
+            const moveVector = new THREE.Vector3()
+                .addScaledVector(forwardVector, -moveForward) // 前後移動 (forwardとmoveForwardの符号が逆なので注意)
+                .addScaledVector(rightVector, moveRight);    // 左右移動
+
+            // カメラの位置を更新
+            camera.position.add(moveVector);
+            // (オプション) OrbitControlsの注視点も一緒に移動させるとFPS風操作になる
+             // controls.target.add(moveVector);
+        }
+
+        function onStickUp(event) {
+             // ドラッグ中でない、または操作中のポインターIDが異なれば処理しない
+             if (!isDraggingStick || event.pointerId !== stickPointerId) return;
+
+            isDraggingStick = false; // ドラッグ終了フラグ
+            stickHandle.releasePointerCapture(stickPointerId); // ポインターキャプチャ解放
+            stickPointerId = null; // ポインターIDリセット
+            stickHandle.style.cursor = 'grab'; // カーソル戻す
+            // ハンドルを中央に戻すアニメーション
+            stickHandle.style.transition = 'transform 0.1s ease-out';
+            stickHandle.style.transform = 'translate(0px, 0px)';
+            // アニメーション後にtransitionを解除
+            setTimeout(() => { stickHandle.style.transition = ''; }, 100);
+            // インベントリが表示されていなければカメラコントロールを有効に戻す
+             if (controls && !inventoryVisible) controls.enabled = true;
+        }
+
+        // === ウィンドウリサイズ処理 ===
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight; // アスペクト比更新
+            camera.updateProjectionMatrix(); // 投影行列再計算
+            renderer.setSize(window.innerWidth, window.innerHeight); // レンダラーサイズ更新
+        }
+
+        // === アニメーションループ ===
+        function animate(currentTime) {
+            // 次のフレーム描画を予約
+            requestAnimationFrame(animate);
+
+            // --- FPS制限 ---
+            // targetFrameIntervalが設定されている(0より大きい)場合
+            if (targetFrameInterval > 0) {
+                const elapsed = currentTime - lastFrameTime; // 前フレームからの経過時間
+                // 経過時間が目標間隔より短い場合は、このフレームの描画をスキップ
+                if (elapsed < targetFrameInterval) {
+                    return;
+                }
+                // 描画する場合、次の基準時間を設定 (遅延を考慮)
+                lastFrameTime = currentTime - (elapsed % targetFrameInterval);
+            }
+
+            // --- FPS計算・表示 ---
+            const delta = clock.getDelta(); // 前フレームからの経過時間(秒)
+            const currentFps = delta > 0 ? (1.0 / delta) : 0; // 現在のFPS
+            // FPS表示を0.5秒ごとに更新 (描画負荷軽減)
+            if (currentTime - (animate.lastFpsUpdateTime || 0) > 500) {
+                fpsDisplay.textContent = `FPS: ${Math.round(currentFps)}`;
+                animate.lastFpsUpdateTime = currentTime;
+            }
+
+            // カメラコントロール更新 (有効な場合)
+            if (controls && controls.enabled) {
+                controls.update(); // Dampingが有効な場合、毎フレーム呼ぶ必要あり
+            }
+
+            // シーンをレンダリング
+            renderer.render(scene, camera);
+        }
+
+        // === アプリケーション開始 ===
+        init();
+
+    </script>
+</body>
+</html>

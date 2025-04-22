@@ -2,30 +2,72 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stormworks XML Editor (Stage 3.2)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stormworks Vehicle Editor (New UI)</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div id="file-controls">
-        <label for="fileInput">ビークルXML:</label>
-        <input type="file" id="fileInput" accept=".xml">
-        <button id="loadButton">読み込み</button>
-        <button id="saveButton">保存</button>
-        <span id="file-status"></span> </div>
+    <canvas id="three-canvas"></canvas>
 
-    <div id="mode-indicator">
-        現在のモード: <span id="current-mode-text">通常</span>
+    <div id="inventory-overlay"></div>
+
+    <div id="left-toolbar" class="toolbar">
+        <button class="toolbar-button mode-button" data-mode="NORMAL" title="通常モード (Escape)"><span class="icon-text">➕</span></button>
+        <button class="toolbar-button mode-button" data-mode="DELETE" title="削除モード (X)"><span class="icon-text">🗑️</span></button>
+        <button class="toolbar-button mode-button" data-mode="XML_EDIT" title="XML編集モード (Shift+E)"><span class="icon-text">✏️</span></button>
+        <button class="toolbar-button mode-button" data-mode="RANGE_SELECT" title="範囲選択モード (Shift+S)"><span class="icon-text">🔲</span></button>
+        <button class="toolbar-button mode-button" data-mode="PAINT" title="ペイントモード (Shift+C)"><span class="icon-text">🎨</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <button id="toggle-stick-button" class="toolbar-button active" title="移動スティック表示切替"><span class="icon-text">🕹️</span></button>
     </div>
 
-    <div id="inventory-controls">
-        <div>配置ブロック:</div>
-        <button class="block-select-button" data-block-id="01_block">基本ブロック</button>
-        <button class="block-select-button" data-block-id="02_wedge">ウェッジ</button>
-        <div id="current-placement-block">選択中: 基本ブロック</div>
+    <div id="right-toolbar" class="toolbar">
+        <button class="toolbar-button range-only" data-action="COPY" title="コピー (Ctrl+C)" style="display: none;"><span class="icon-text">📄</span></button>
+        <button class="toolbar-button range-only" data-action="CUT" title="カット (Ctrl+X)" style="display: none;"><span class="icon-text">✂️</span></button>
+        <button class="toolbar-button range-only" data-action="PASTE" title="ペースト (Ctrl+V)" style="display: none;"><span class="icon-text">📋</span></button>
+        <button class="toolbar-button range-only" data-action="CLEAR_CLIPBOARD" title="クリップボードクリア (Shift+Q)" style="display: none;"><span class="icon-text">❌</span></button>
+        <hr class="range-only" style="width: 80%; border-color: #666; margin: 5px 0; display: none;">
+        <button class="toolbar-button" data-action="UNDO" title="元に戻す (Ctrl+Z)"><span class="icon-text">↩️</span></button>
+        <button class="toolbar-button" data-action="REDO" title="やり直し (Ctrl+Y)"><span class="icon-text">↪️</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <button class="toolbar-button" data-action="SYMMETRY_X" title="X軸対称"><span class="icon-text">X</span></button>
+        <button class="toolbar-button" data-action="SYMMETRY_Y" title="Y軸対称"><span class="icon-text">Y</span></button>
+        <button class="toolbar-button" data-action="SYMMETRY_Z" title="Z軸対称"><span class="icon-text">Z</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <label for="file-input-main" class="toolbar-button" title="読込" style="cursor: pointer;"><span class="icon-text">📂</span></label>
+        <input type="file" id="file-input-main" accept=".xml" style="display: none;"> <button class="toolbar-button" data-action="SAVE" title="保存"><span class="icon-text">💾</span></button>
+        <hr style="width: 80%; border-color: #666; margin: 5px 0;">
+        <button id="fullscreen-button" class="toolbar-button" title="フルスクリーン切替"><span class="icon-text">⛶</span></button>
     </div>
 
-    <div id="xml-edit-panel" class="edit-panel" style="display: none;"> <h4>XML編集 (選択ブロック)</h4>
+    <div id="bottom-toolbar" class="toolbar">
+        <button class="hotbar-item active" data-block-id="01_block" title="ブロック"><span class="icon-text">🧱</span></button>
+        <button class="hotbar-item" data-block-id="02_wedge" title="ウェッジ"><span class="icon-text">◤</span></button>
+        <div style="width: 1px; background-color: #666; margin: 0 5px; height: 30px;"></div>
+        <button id="toggle-inventory-button" class="toolbar-button" title="インベントリ開閉"><span class="icon-text">🎒</span></button>
+    </div>
+
+    <div id="info-display">
+        <div>質量: <span id="info-mass">----</span> kg</div>
+        <div>コスト: $<span id="info-cost">----</span></div>
+        <table>
+             <tr><td>X:</td><td><span id="size-x">--</span> (<span id="size-x-m">--</span>m)</td></tr>
+             <tr><td>Y:</td><td><span id="size-y">--</span> (<span id="size-y-m">--</span>m)</td></tr>
+             <tr><td>Z:</td><td><span id="size-z">--</span> (<span id="size-z-m">--</span>m)</td></tr>
+        </table>
+        <div id="fps-display">FPS: --</div>
+        <button id="battery-save-button" class="toolbar-button fps-unlimited" title="FPS制限切替 (∞ > 60 > 30)">∞</button>
+    </div>
+
+    <div id="camera-stick">
+        <div id="stick-handle"></div>
+    </div>
+
+    <div id="xml-edit-panel" style="display: none;">
+        <h4>
+            XML編集 (選択ブロック)
+            <button id="toggle-xml-panel" title="パネルを格納/展開">^</button>
+        </h4>
         <div class="edit-section">
             <label>座標 (vp):</label>
             <div class="vector3-input">
@@ -37,27 +79,26 @@
         <div class="edit-section">
             <label>回転行列 (r):</label>
             <div class="matrix3x3-input">
-                <div>
-                    <input type="number" step="1" id="edit-r-11" data-row="0" data-col="0" title="r[1,1]">
-                    <input type="number" step="1" id="edit-r-21" data-row="1" data-col="0" title="r[2,1]">
-                    <input type="number" step="1" id="edit-r-31" data-row="2" data-col="0" title="r[3,1]">
-                </div>
-                <div>
-                    <input type="number" step="1" id="edit-r-12" data-row="0" data-col="1" title="r[1,2]">
-                    <input type="number" step="1" id="edit-r-22" data-row="1" data-col="1" title="r[2,2]">
-                    <input type="number" step="1" id="edit-r-32" data-row="2" data-col="1" title="r[3,2]">
-                </div>
-                <div>
-                    <input type="number" step="1" id="edit-r-13" data-row="0" data-col="2" title="r[1,3]">
-                    <input type="number" step="1" id="edit-r-23" data-row="1" data-col="2" title="r[2,3]">
-                    <input type="number" step="1" id="edit-r-33" data-row="2" data-col="2" title="r[3,3]">
-                </div>
+                <div><input type="number" step="1" id="edit-r-11" data-row="0" data-col="0" title="r[1,1]"><input type="number" step="1" id="edit-r-21" data-row="1" data-col="0" title="r[2,1]"><input type="number" step="1" id="edit-r-31" data-row="2" data-col="0" title="r[3,1]"></div>
+                <div><input type="number" step="1" id="edit-r-12" data-row="0" data-col="1" title="r[1,2]"><input type="number" step="1" id="edit-r-22" data-row="1" data-col="1" title="r[2,2]"><input type="number" step="1" id="edit-r-32" data-row="2" data-col="1" title="r[3,2]"></div>
+                <div><input type="number" step="1" id="edit-r-13" data-row="0" data-col="2" title="r[1,3]"><input type="number" step="1" id="edit-r-23" data-row="1" data-col="2" title="r[2,3]"><input type="number" step="1" id="edit-r-33" data-row="2" data-col="2" title="r[3,3]"></div>
             </div>
         </div>
-         <div id="xml-edit-info" class="info-text">ブロックが選択されていません。</div>
+         <div id="xml-edit-info" class="info-text">ブロックを選択してください。</div>
     </div>
 
-    <canvas id="workbench-canvas"></canvas>
+    <div id="inventory-panel">
+        <input type="search" id="inventory-search" placeholder="ブロック名を検索...">
+        <div class="inventory-content">
+            </div>
+    </div>
+
+    <div id="range-adjust-dpad">
+        <button id="dpad-up">▲</button>
+        <button id="dpad-left">◀</button>
+        <button id="dpad-right">▶</button>
+        <button id="dpad-down">▼</button>
+    </div>
 
     <script type="importmap">
         {
