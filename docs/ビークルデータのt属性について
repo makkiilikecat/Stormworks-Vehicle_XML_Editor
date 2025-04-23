@@ -1,0 +1,84 @@
+<c d="sign_na">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="1"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="1">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="2"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="2">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="3"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="3">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="4"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="4">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="5"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="5">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="6"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="6">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="7"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+<c d="sign_na" t="7">
+    <o r="1,0,0,0,1,0,0,0,1" sc="6" gc="C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,C2C3C7,C2C3C7,x,x,x,x,x,FF002B,FF002B,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF,9E1D,9E1D,x,x,x,x,x,29ADFF,29ADFF">
+        <vp x="8"/>
+        <logic_slots>
+            <slot/>
+        </logic_slots>
+    </o>
+</c>
+
+tは記述なし、0~7が使える
+記述なしを基準として、
+t={
+    0:{+X,+Y,+Z}
+    1:{-X,+Y,+Z}
+    2:{-X,-Y,-Z}
+    3:{+X,-Y,-Z}
+    4:{-X,+Y,-Z}
+    5:{+X,+Y,-Z}
+    6:{-X,-Y,+Z}
+    7:{+X,-Y,+Z}
+}

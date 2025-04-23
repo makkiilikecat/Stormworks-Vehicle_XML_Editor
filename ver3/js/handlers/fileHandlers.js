@@ -15,7 +15,10 @@
  */
 
 // --- 必要なモジュールをインポート ---
-import { loadFileAsText, parseVehicleXml, generateVehicleXml, downloadXmlFile } from '../io/fileHandler.js';
+import { loadFileAsText } from '../io/fileLoader.js';
+import { parseVehicleXml } from '../io/xmlParser.js';
+import { generateVehicleXml } from '../io/xmlGenerator.js';
+import { downloadXmlFile } from '../io/fileDownloader.js';
 import { setupHistoryManager } from '../state/historyManager.js';
 import { clearBlocks, renderBlocks } from '../rendering/blockRenderer.js';
 import { showPopup } from '../ui/popupUtils.js';

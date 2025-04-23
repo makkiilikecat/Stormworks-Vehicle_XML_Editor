@@ -1,7 +1,9 @@
 /**
  * @fileoverview Stormworksのビークル内の単一ブロックのデータを表現するクラス。
- * 内部状態はThree.js座標系で保持し、XML座標系との変換メソッドを提供。
- * また、関連する3Dメッシュの更新機能も持つ。
+ * XMLの属性や子要素を含めて、元の情報を可能な限り保持するように拡張。
+ * 【主な変更点】
+ * - `cAttributes`, `oAttributes`, `oChildren` プロパティを追加。
+ * - コンストラクタでこれらの追加情報を受け付けるように修正。
  */
 
 import * as THREE from 'three';
@@ -13,16 +15,15 @@ import {
     rotationMatrixToXmlElements, // Three.js Matrix4 -> XML回転要素配列
     rotationMatrixFromXmlElements // XML回転要素配列 -> Three.js Matrix4
 } from '../utils/coordinateConverter.js';
-// ★修正: ブロック定義情報取得関数をインポート (循環参照は現状発生しない)
-import { getBlockDefinition } from '../data/blockDefinitions.js';
+import { getBlockDefinition } from '../data/blockDefinitions.js'; // ★修正: ブロック定義情報取得関数
 
 // --- モジュール内変数 ---
-// ユニークなブロックIDを生成するためのカウンター
 let nextBlockId = 0;
 
 /**
  * Stormworksのビークル内の単一ブロックのデータを表現するクラス。
- * 位置と回転は内部的にThree.js座標系の Vector3 と Matrix4 で保持します。
+ * 位置と回転は内部的にThree.js座標系で保持しつつ、
+ * XMLの他の属性や要素も保持します。
  */
 export class BlockData {
     /**
@@ -31,131 +32,134 @@ export class BlockData {
      * @param {object | null} positionXml - XML座標系の位置 {x, y, z}。nullの場合は原点。
      * @param {string | null} rotationString - XML回転行列文字列 ('r'属性)。nullの場合は単位行列。
      * @param {string | null} colorString - XML色インデックス文字列 ('sc'属性)。nullの場合は"0"。
+     * @param {number | string | null} tAttributeValue - XMLの 't' 属性値 (数値)。nullまたは未指定の場合は0。
+     * @param {Map<string, string>} [cAttributes] - <c>要素の他の属性 (d, t以外)。
+     * @param {Map<string, string>} [oAttributes] - <o>要素の他の属性 (r, sc以外)。
+     * @param {Node[]} [oChildren] - <o>要素の子要素 (vp以外) のNode配列。
      * @param {THREE.Matrix4} [initialMatrix] - (オプション) Three.js座標系の初期向き行列。rotationStringより優先される。
      */
-    constructor(definitionId, positionXml, rotationString, colorString, initialMatrix = null) {
-        // ユニークIDを割り当て
+    constructor(
+        definitionId, positionXml, rotationString, colorString, tAttributeValue,
+        cAttributes = new Map(), oAttributes = new Map(), oChildren = [],
+        initialMatrix = null
+    ) {
         this.id = nextBlockId++;
-        // ブロック定義ID (nullならデフォルト)
         this.definitionId = definitionId || '01_block';
 
-        // 内部状態 (Three.js座標系)
-        // 位置: XML座標からVector3に変換
+        // --- 基本属性の処理 (Stage 1 と同様) ---
+        const tValue = parseInt(tAttributeValue, 10);
+        this.tAttribute = !isNaN(tValue) ? tValue : 0;
         this.position = positionFromXml(positionXml || {x:0, y:0, z:0});
-        // 回転: initialMatrixがあれば優先、なければXML文字列からMatrix4に変換
         this.rotationMatrix = initialMatrix instanceof THREE.Matrix4
                               ? initialMatrix.clone()
-                              : rotationMatrixFromXmlString(rotationString); // rotationStringがnullでも単位行列が返る
-        // 色情報: 文字列を数値配列にパース
+                              : rotationMatrixFromXmlString(rotationString);
         this.colorIndices = this.parseColorIndices(colorString || "0");
 
-        // 関連する3Dメッシュへの参照 (初期値はnull)
-        this.mesh = null;           // 通常表示用の実サイズモデル
-        this.foregroundMesh = null; // XML編集モード用の前景キューブ (1x1x1)
+        // --- ★追加: その他のXML情報の保持 ---
+        this.cAttributes = cAttributes instanceof Map ? cAttributes : new Map();
+        this.oAttributes = oAttributes instanceof Map ? oAttributes : new Map();
+        // oChildren は Node の配列として受け取る想定 (XML生成時にシリアライズ)
+        // ここではシャローコピーを行う (Node自体はクローンされたものが渡される前提)
+        this.oChildren = Array.isArray(oChildren) ? [...oChildren] : [];
+        // 【デバッグログ】追加情報の保持
+        // console.log(`[BlockData ID:${this.id}] 追加情報: cAttrs=${this.cAttributes.size}, oAttrs=${this.oAttributes.size}, oChildren=${this.oChildren.length}`);
 
-        // console.log(`[BlockData] Block ID ${this.id} 作成: Def=${this.definitionId}, Pos=${this.position.x},${this.position.y},${this.position.z}`);
+
+        // 関連する3Dメッシュへの参照 (初期値はnull)
+        this.mesh = null;
+        this.foregroundMesh = null;
     }
 
     /**
      * カラーインデックスの文字列 ('sc'属性) を数値配列にパースします。
-     * 不正な値はフィルタリングされます。
      * @param {string} scString - 'sc'属性の文字列。
      * @returns {number[]} パースされた数値の配列。最低1要素 (0) を保証。
      * @private
      */
     parseColorIndices(scString) {
-        const indices = scString.split(',')             // カンマで分割
-                               .map(s => parseInt(s, 10)) // 10進数に変換
-                               .filter(n => !isNaN(n));   // NaNを除去
-        // 配列が空になった場合はデフォルトの [0] を返す
+        const indices = scString.split(',')
+                               .map(s => parseInt(s, 10))
+                               .filter(n => !isNaN(n));
         return indices.length > 0 ? indices : [0];
     }
 
     // --- XML座標系アクセス用メソッド ---
+    // (変更なし)
+    getPositionXml() { return positionToXml(this.position); }
+    getRotationMatrixXmlElements() { return rotationMatrixToXmlElements(this.rotationMatrix); }
 
-    /**
-     * 現在の内部位置 (Three.js座標系) をXML座標系のオブジェクトとして取得します。
-     * Z座標の反転と整数への丸めが行われます。
-     * @returns {{x: number, y: number, z: number}} XML座標系の位置オブジェクト。
-     */
-    getPositionXml() {
-        return positionToXml(this.position);
-    }
-
-    /**
-     * 現在の内部回転行列 (Three.js座標系) をXMLの 'r' 属性に対応する
-     * 9つの整数要素の配列 (列優先) として取得します。
-     * 座標系の変換と整数への丸めが行われます。
-     * @returns {number[]} 9つの整数要素の配列 [r11, r21, r31, r12, ...]。
-     */
-    getRotationMatrixXmlElements() {
-        return rotationMatrixToXmlElements(this.rotationMatrix);
-    }
-
-    // --- 内部状態設定メソッド (主にXML編集UIや履歴から使用) ---
-
-    /**
-     * XML座標系の位置 (x, y, z) を指定して、内部の Three.js 位置を更新します。
-     * 同時に、紐づくメッシュのワールド行列も更新します。
-     * @param {number} x - X座標 (XML座標系)。
-     * @param {number} y - Y座標 (XML座標系)。
-     * @param {number} z - Z座標 (XML座標系)。
-     */
+    // --- 内部状態設定メソッド ---
+    // (変更なし)
     setPositionFromXml(x, y, z) {
-        // coordinateConverter を使ってThree.js座標に変換して格納
         this.position = positionFromXml({x, y, z});
-        // console.log(`[BlockData ID ${this.id}] 位置更新 (XMLから): ${x},${y},${z} -> Three.js:`, this.position);
-        // 紐づくメッシュのワールド行列を更新
         this.updateMeshMatrix();
+    }
+    setRotationMatrixFromXmlElements(elements) {
+        this.rotationMatrix = rotationMatrixFromXmlElements(elements);
+        this.updateMeshMatrix();
+    }
+    setTAttribute(value) {
+        const intValue = parseInt(value, 10);
+        if (!isNaN(intValue) && intValue >= 0 && intValue <= 7) {
+            if (this.tAttribute !== intValue) {
+                console.log(`[BlockData ID ${this.id}] t属性を ${this.tAttribute} から ${intValue} に変更`);
+                this.tAttribute = intValue;
+                // Step 3 で t 属性が視覚表現に影響するようになったらメッシュ更新が必要
+            }
+        } else { /* Warn */ }
     }
 
     /**
-     * XML座標系の回転行列要素 (9つの整数配列、列優先) を指定して、
-     * 内部の Three.js 回転行列 (Matrix4) を更新します。
-     * 同時に、紐づくメッシュのワールド行列も更新します。
-     * @param {number[]} elements - 9つの整数要素の配列 [r11, r21, r31, r12, ...]。
+     * ★追加: その他の <c> 要素の属性を設定します。
+     * @param {string} name - 属性名。
+     * @param {string} value - 属性値。
      */
-    setRotationMatrixFromXmlElements(elements) {
-         // coordinateConverter を使ってThree.js Matrix4に変換して格納
-        this.rotationMatrix = rotationMatrixFromXmlElements(elements);
-        // console.log(`[BlockData ID ${this.id}] 回転更新 (XML要素から)`);
-        // 紐づくメッシュのワールド行列を更新
-        this.updateMeshMatrix();
+    setCAttribute(name, value) {
+        if (typeof name === 'string' && typeof value === 'string') {
+            this.cAttributes.set(name, value);
+            console.log(`[BlockData ID ${this.id}] <c>属性 '${name}' を '${value}' に設定`);
+        }
+    }
+
+    /**
+     * ★追加: その他の <o> 要素の属性を設定します。
+     * @param {string} name - 属性名。
+     * @param {string} value - 属性値。
+     */
+    setOAttribute(name, value) {
+         if (typeof name === 'string' && typeof value === 'string') {
+            this.oAttributes.set(name, value);
+            console.log(`[BlockData ID ${this.id}] <o>属性 '${name}' を '${value}' に設定`);
+        }
     }
 
     // --- メッシュ更新 ---
-
-    /**
-     * このBlockDataに紐づく全てのメッシュ（通常モデルと前景キューブ）の
-     * ワールド行列を現在の `position` と `rotationMatrix` に基づいて更新します。
-     * 通常モデルはブロック定義の `offset` も考慮します。
-     */
+    // (Stage 3 で tAttribute を考慮する必要があるため、TODOコメントを追加)
     updateMeshMatrix() {
-        // 通常（実サイズ）モデルの更新
-        if (this.mesh && this.mesh.parent) { // メッシュが存在し、シーンに追加されている場合のみ
-            const definition = getBlockDefinition(this.definitionId); // ★修正: インポートした関数を使用
-            const offset = definition.offset || [0, 0, 0]; // オフセット取得 (なければ [0,0,0])
+        // TODO: Step 3 で t 属性による変換行列を追加する
+        const tMatrix = new THREE.Matrix4(); // 現状は単位行列
 
-            // ワールド行列 = T(pos) * R(rot) * T(offset)
+        // 通常モデル
+        if (this.mesh && this.mesh.parent) {
+            const definition = getBlockDefinition(this.definitionId);
+            const offset = definition.offset || [0, 0, 0];
             const _translatePos = new THREE.Matrix4().makeTranslation(this.position.x, this.position.y, this.position.z);
             const _translateOffset = new THREE.Matrix4().makeTranslation(offset[0], offset[1], offset[2]);
             this.mesh.matrix.copy(_translatePos)
                  .multiply(this.rotationMatrix)
+                 .multiply(tMatrix) // t属性変換を適用 (Stage 3)
                  .multiply(_translateOffset);
-            this.mesh.matrixWorldNeedsUpdate = true; // ワールド行列の更新フラグ
+            this.mesh.matrixWorldNeedsUpdate = true;
         }
 
-        // XML編集モードの前景キューブの更新
-        if (this.foregroundMesh && this.foregroundMesh.parent) { // メッシュが存在し、シーンに追加されている場合
-            // ワールド行列 = T(pos) * R(rot) (オフセットなし)
+        // 前景キューブ
+        if (this.foregroundMesh && this.foregroundMesh.parent) {
             const _translatePos = new THREE.Matrix4().makeTranslation(this.position.x, this.position.y, this.position.z);
             this.foregroundMesh.matrix
                 .copy(_translatePos)
-                .multiply(this.rotationMatrix);
+                .multiply(this.rotationMatrix)
+                .multiply(tMatrix); // t属性変換を適用 (Stage 3)
             this.foregroundMesh.matrixWorldNeedsUpdate = true;
         }
     }
 }
-
-// ★削除: 仮の getBlockDefinition 関数定義は不要になったため削除
-// const getBlockDefinition = (id) => ({ offset: [0, 0, 0] }); // 仮

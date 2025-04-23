@@ -1,149 +1,131 @@
-import * as THREE from 'three'; // Matrix4を使うためにインポート
-import { BlockData } from '../data/blockData.js';
+/**
+ * @fileoverview ファイル読み込みボタン (<input type="file"> の変更) および
+ * 保存ボタンのクリックイベントに対応するハンドラ関数を提供します。
+ * ファイルの読み込み、解析、XML生成、ダウンロードの実際の処理は
+ * io/ ディレクトリ内の分割されたモジュールに依存します。
+ * 処理結果のユーザーへの通知は ui/popupUtils.js を使用します。
+ * 【主な変更点】
+ * - インポート元を分割後のファイルに変更 (fileLoader, xmlParser, xmlGenerator, fileDownloader)
+ *
+ * 依存関係:
+ * - io/fileLoader.js: loadFileAsText
+ * - io/xmlParser.js: parseVehicleXml
+ * - io/xmlGenerator.js: generateVehicleXml
+ * - io/fileDownloader.js: downloadXmlFile
+ * - state/historyManager.js: setupHistoryManager (読み込み時に履歴リセット)
+ * - rendering/blockRenderer.js: clearBlocks, renderBlocks (シーン更新)
+ * - ui/popupUtils.js: showPopup (ユーザー通知)
+ * - ui/infoDisplayHandler.js: updateInfoDisplay (情報表示更新)
+ * - data/blockDefinitions.js: (直接は使用せず、infoDisplayHandler経由)
+ */
+
+// --- ★修正: 必要なモジュールを分割後のファイルからインポート ---
+import { loadFileAsText } from '../io/fileLoader.js';
+import { parseVehicleXml } from '../io/xmlParser.js';
+import { generateVehicleXml } from '../io/xmlGenerator.js';
+import { downloadXmlFile } from '../io/fileDownloader.js';
+// --- (ここまで修正) ---
+import { setupHistoryManager } from '../state/historyManager.js';
+import { clearBlocks, renderBlocks } from '../rendering/blockRenderer.js';
+import { showPopup } from '../ui/popupUtils.js';
+import { updateInfoDisplay } from '../ui/infoDisplayHandler.js';
 
 /**
- * ユーザーが選択したファイルオブジェクトを読み込み、内容をテキストとして返します。
- * @param {File} file - ユーザーが選択したファイルオブジェクト。
- * @returns {Promise<string>} ファイルの内容 (XML文字列) を解決するPromise。
+ * ファイル選択後に呼び出され、XMLファイルの読み込みと解析、
+ * アプリケーション状態の更新を行います。
+ * 読み込みに成功した場合のみ、既存のブロックデータと履歴がクリアされ、
+ * 新しいデータでシーンが再描画されます。失敗した場合はエラーをポップアップで表示します。
+ *
+ * @param {object} appState - アプリケーションの状態オブジェクト。
+ * { selectedFile: File, scene: THREE.Scene, loadedBlocks: BlockData[] } を含む。
  */
-export function loadFileAsText(file) {
-    // (変更なし)
-    return new Promise((resolve, reject) => {
-        if (!file) {
-            reject(new Error('ファイルが選択されていません。'));
-            return;
-        }
-        const reader = new FileReader();
-        reader.onload = (event) => resolve(event.target.result);
-        reader.onerror = (event) => {
-            console.error("ファイル読み込みエラー:", event.target.error);
-            reject(new Error('ファイルの読み込みに失敗しました。'));
-        };
-        reader.readAsText(file);
-    });
+export async function handleLoadButtonClick(appState) {
+    const { selectedFile, scene, loadedBlocks } = appState;
+
+    if (!selectedFile) {
+        const msg = '読み込みエラー: ファイルが選択されていません。';
+        console.warn(`[FileHandler] ${msg}`);
+        showPopup(msg, 'warning');
+        return;
+    }
+
+    console.log(`[FileHandler] ファイル読み込み処理開始: ${selectedFile.name}`);
+
+    try {
+        // --- ファイル読み込みと解析 ---
+        const xmlString = await loadFileAsText(selectedFile); // from fileLoader.js
+        const parsedBlocks = parseVehicleXml(xmlString);      // from xmlParser.js
+
+        // --- 成功時の処理 ---
+        console.log("[FileHandler] XML解析成功。既存データをクリアして更新します。");
+
+        // 1. 既存のブロックとメッシュをクリア
+        clearBlocks(scene);
+
+        // 2. アプリケーション状態のブロックリストを更新
+        loadedBlocks.length = 0;
+        loadedBlocks.push(...parsedBlocks);
+
+        // 3. 履歴マネージャーをリセット
+        setupHistoryManager(scene, loadedBlocks);
+
+        // 4. 新しいブロックデータでシーンを再描画
+        renderBlocks(scene, loadedBlocks);
+
+        // 5. 情報表示エリアを更新
+        updateInfoDisplay(loadedBlocks);
+
+        // 6. ブロック構成が変更されたことを通知
+        document.dispatchEvent(new CustomEvent('blocksChanged'));
+
+        // 7. 成功メッセージをポップアップで表示
+        const msg = `読み込み完了: ${parsedBlocks.length} ブロック (${selectedFile.name})`;
+        console.log(`[FileHandler] ${msg}`);
+        showPopup(msg, 'success');
+
+    } catch (error) {
+        // --- 失敗時の処理 ---
+        const errorMsg = `ファイル読み込み/解析エラー: ${error.message}`;
+        console.error(`[FileHandler] ${errorMsg}`, error);
+        showPopup(errorMsg, 'error', 5000);
+    }
 }
 
 /**
- * StormworksのビークルXML文字列を解析し、BlockDataオブジェクトの配列を生成します。
- * 'd'属性がない場合は '01_block' として扱います。
- * @param {string} xmlString - 解析するXML文字列。
- * @returns {BlockData[]} 抽出されたブロックデータの配列。
- * @throws {Error} XMLの解析に失敗した場合。
+ * 保存ボタンクリック時に呼び出され、現在のブロックデータからXMLファイルを生成し、
+ * ダウンロードさせます。結果はポップアップで通知します。
+ * @param {object} appState - アプリケーションの状態オブジェクト。
+ * { loadedBlocks: BlockData[], selectedFile?: File } を含む。
  */
-export function parseVehicleXml(xmlString) {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlString, "text/xml");
-    const parserError = xmlDoc.querySelector("parsererror");
-    if (parserError) { /* ... エラー処理 ... */ }
+export function handleSaveButtonClick(appState) {
+    const { loadedBlocks, selectedFile } = appState;
 
-    const blocks = [];
-    const componentElements = xmlDoc.querySelectorAll("vehicle > bodies > body > components > c");
+    if (!loadedBlocks || loadedBlocks.length === 0) {
+        const msg = '保存するブロックがありません。';
+        console.warn(`[FileHandler] ${msg}`);
+        showPopup(msg, 'warning');
+        return;
+    }
 
-    componentElements.forEach(comp => {
-        const objectElement = comp.querySelector("o");
-        if (objectElement) {
-            // --- 修正点: 'd'属性がない場合のデフォルト値を設定 ---
-            const definitionId = comp.getAttribute('d') || '01_block';
-            // --------------------------------------------------
-            const rotationString = objectElement.getAttribute('r');
-            const colorString = objectElement.getAttribute('sc');
-            const vpElement = objectElement.querySelector("vp");
-            const positionXml = vpElement ? { x: vpElement.getAttribute('x'), y: vpElement.getAttribute('y'), z: vpElement.getAttribute('z') } : null;
-            try {
-                 blocks.push(new BlockData(definitionId, positionXml, rotationString, colorString));
-            } catch (e) {
-                 console.error("BlockData の作成に失敗しました:", e);
-            }
-        }
-    });
-    console.log(`XMLから ${blocks.length} 個のブロックを解析しました。`);
-    return blocks;
+    console.log("[FileHandler] XML生成中...");
+
+    try {
+        // --- XML生成とダウンロード ---
+        const xmlString = generateVehicleXml(loadedBlocks); // from xmlGenerator.js
+        const filename = selectedFile
+                       ? selectedFile.name.replace(/\.xml$/i, '_edited.xml')
+                       : 'vehicle_edited.xml';
+        downloadXmlFile(xmlString, filename);               // from fileDownloader.js
+
+        // --- 成功時の処理 ---
+        const msg = `ファイル保存完了: ${filename}`;
+        console.log(`[FileHandler] ${msg}`);
+        showPopup(msg, 'success');
+
+    } catch (error) {
+        // --- 失敗時の処理 ---
+        const errorMsg = `XML生成または保存エラー: ${error.message}`;
+        console.error(`[FileHandler] ${errorMsg}`, error);
+        showPopup(errorMsg, 'error', 5000);
+    }
 }
-
-// --- Stage 1.4 追加 ---
-
-/**
- * BlockDataの配列からStormworksビークルXML形式の文字列を生成します。
- * 座標と回転行列はStormworksの座標系・整数値に変換されます。
- * @param {BlockData[]} blockDataArray - XMLに変換するブロックデータの配列。
- * @returns {string} 生成されたXML文字列。
- */
-export function generateVehicleXml(blockDataArray) {
-    let componentsXml = ''; // 各ブロックのXMLを結合する変数
-
-    blockDataArray.forEach(blockData => {
-        // --- 座標 (`vp`) の準備 (Stormworks座標系に戻し、整数化) ---
-        const posX = Math.round(blockData.position.x);
-        const posY = Math.round(blockData.position.y);
-        const posZ = Math.round(-blockData.position.z); // Zの符号を反転
-
-        // --- 回転行列 (`r`) の準備 (Stormworks座標系に戻し、整数化) ---
-        const matrix = blockData.rotationMatrix; // Three.js座標系のMatrix4
-        const me = matrix.elements; // 列優先配列 m11, m21, m31, m41, m12, ...
-        // 座標系逆変換 (T * M_three * T) と整数化
-        const r11 = Math.round(me[0]); const r21 = Math.round(me[1]); const r31 = Math.round(-me[2]);
-        const r12 = Math.round(me[4]); const r22 = Math.round(me[5]); const r32 = Math.round(-me[6]);
-        const r13 = Math.round(-me[8]); const r23 = Math.round(-me[9]); const r33 = Math.round(me[10]);
-        const rString = `${r11},${r21},${r31},${r12},${r22},${r32},${r13},${r23},${r33}`;
-
-        // --- 色 (`sc`) の準備 ---
-        const scString = blockData.colorIndices.join(',');
-
-        // --- XML要素の組み立て ---
-        const vpXml = `<vp x="${posX}" y="${posY}" z="${posZ}"/>`;
-        // 'd'属性はdefinitionIdが存在する場合のみ追加
-        const dAttribute = blockData.definitionId ? ` d="${blockData.definitionId}"` : '';
-        // 'r'属性は単位行列でない場合に追加するのが一般的だが、常に含める方が安全
-        const rAttribute = ` r="${rString}"`;
-        // 'sc'属性も常に含める（デフォルトは"0"のはず）
-        const scAttribute = ` sc="${scString}"`;
-
-        const oXml = `<o${rAttribute}${scAttribute}>${vpXml}</o>`;
-        const cXml = `<c${dAttribute}>${oXml}</c>\n`; // 各ブロックの定義
-
-        componentsXml += cXml; // 文字列に追加
-    });
-
-    // --- 車両全体のXML構造を組み立て ---
-    // TODO: bodies_id や unique_id は適切に管理・生成する必要がある (将来の課題)
-    const vehicleXml = `<?xml version="1.0" encoding="UTF-8"?>
-<vehicle data_version="3" bodies_id="1">
-    <authors/>
-    <bodies>
-        <body unique_id="1">
-            <components>
-${componentsXml}            </components>
-        </body>
-    </bodies>
-    <logic_node_links/>
-</vehicle>`;
-
-    return vehicleXml;
-}
-
-/**
- * 指定されたテキストコンテンツをXMLファイルとしてダウンロードさせます。
- * @param {string} xmlString - ダウンロードするXMLの内容。
- * @param {string} filename - ダウンロード時のデフォルトファイル名。
- */
-export function downloadXmlFile(xmlString, filename = 'vehicle.xml') {
-    // Blobオブジェクトを作成 (MIMEタイプをXMLに設定)
-    const blob = new Blob([xmlString], { type: 'text/xml;charset=utf-8' });
-    // ダウンロード用のURLを生成
-    const url = URL.createObjectURL(blob);
-
-    // 一時的な<a>要素（リンク）を作成
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename; // ダウンロードファイル名を設定
-
-    // リンクをDOMに追加してプログラム的にクリックし、その後削除
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    // 生成したURLを解放
-    URL.revokeObjectURL(url);
-    console.log(`"${filename}"としてXMLファイルを保存しました。`);
-}
-// ----------------------

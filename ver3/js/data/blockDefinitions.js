@@ -19,7 +19,7 @@
 export const blockDefinitions = {
     // --- 基本形状 ---
     '01_block':          { name: 'Block',             type: 'cube',       size: [1, 1, 1], offset: [0, 0, 0], cost: 1, mass: 1, tags: ['基本形状', '構造'], icon: '🧱' },
-    '01_block_static':   { name: 'Static Block',      type: 'cube',       size: [1, 1, 1], offset: [0, 0, 0], cost: 1, mass: 1, tags: ['基本形状', '構造', '特殊'] }, // 静的接続用
+    '01_block_static':   { name: 'Static Block',      type: 'cube',       size: [1, 1, 1], offset: [0, 0, 0], cost: 1, mass: 1, tags: ['基本形状', '構造', '特殊'] }, // 旧バージョンで使われていた原点ブロック 01_blockと同じ
     '01_block_weight':   { name: 'Weight Block',      type: 'cube',       size: [1, 1, 1], offset: [0, 0, 0], cost: 5, mass: 10, tags: ['基本形状', '機能', '重り'] },
     '02_wedge':          { name: 'Wedge',             type: 'wedge',      size: [1, 1, 1], offset: [0, 0, 0], cost: 1, mass: 0.5, tags: ['基本形状', '構造'], icon: '◤' },
     '03_pyramid':        { name: 'Pyramid',           type: 'pyramid',    size: [1, 1, 1], offset: [0, 0, 0], cost: 1, mass: 0.33, tags: ['基本形状', '構造'], icon: '△' }, // offsetは要再調整

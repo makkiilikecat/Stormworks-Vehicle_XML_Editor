@@ -2,6 +2,8 @@
  * @fileoverview Stormworks XML Editor アプリケーションのエントリーポイント。
  * Three.js 環境のセットアップ、主要モジュールの初期化、
  * アニメーションループ (FPS制御含む) の実行、およびカスタムイベントの処理を担当します。
+ * 【主な変更点】
+ * - `appState` に `originalXmlDoc` プロパティを追加。
  */
 
 // --- Three.js 本体 ---
@@ -46,7 +48,8 @@ import { initializeCameraStick, updateCameraPosition } from './interactions/came
  * controls: import('three/addons/controls/OrbitControls.js').OrbitControls | null,
  * loadedBlocks: BlockData[],
  * selectedFile: File | null,
- * canvas: HTMLCanvasElement | null
+ * canvas: HTMLCanvasElement | null,
+ * originalXmlDoc: Document | null // ★追加: 読み込んだ元のXMLドキュメント
  * }}
  */
 const appState = {
@@ -57,6 +60,7 @@ const appState = {
     loadedBlocks: [],
     selectedFile: null,
     canvas: null,
+    originalXmlDoc: null // ★追加: 初期値は null
 };
 // ==================================
 
@@ -92,6 +96,8 @@ function init() {
     appState.camera = sceneEnv.camera;
     appState.renderer = sceneEnv.renderer;
     appState.canvas = sceneEnv.renderer.domElement;
+    // FPS表示要素の取得もここで行う
+    fpsDisplayElement = document.getElementById('fps-display');
 
     // --- 2. カメラコントロール設定 (OrbitControls) ---
     appState.controls = setupOrbitControls(appState.camera, appState.renderer.domElement);
@@ -100,8 +106,8 @@ function init() {
     setupHelpers(appState.scene);
 
     // --- 4. 初期オブジェクト生成 (原点ブロック) ---
-    const originBlockData = createOriginBlockData(appState.scene);
-    appState.loadedBlocks.push(originBlockData);
+    // const originBlockData = createOriginBlockData(appState.scene);
+    // appState.loadedBlocks.push(originBlockData); // 初期状態では空にする方が自然か？
 
     // --- 5. 状態管理モジュール初期化 ---
     setupHistoryManager(appState.scene, appState.loadedBlocks); // アンドゥ/リドゥ履歴
@@ -157,6 +163,8 @@ function animate(currentTime) {
     // --- FPSカウンター計算・表示 ---
     const delta = clock.getDelta(); // 実際のフレーム間時間(秒)を取得
     // 一定間隔でFPS表示を更新 (負荷軽減のため毎フレームは更新しない)
+    // 【デバッグログ】FPS表示要素の存在確認
+    // if (!fpsDisplayElement) console.log("FPS要素なし")
     if (fpsDisplayElement && currentTime - lastFpsUpdateTime > fpsUpdateInterval) {
         const currentFps = delta > 0 ? (1.0 / delta) : 0; // FPS計算 (0除算回避)
         fpsDisplayElement.textContent = `FPS: ${Math.round(currentFps)}`; // 表示更新

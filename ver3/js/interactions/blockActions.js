@@ -1,195 +1,262 @@
 /**
  * @fileoverview ブロックに対する主要な編集アクション（配置、削除）を実装します。
- * これらのアクションは、内部のブロックデータ配列 (`loadedBlocks`) と3Dシーンを更新し、
- * 必要に応じてアンドゥ履歴への登録や、ブロック構成変更イベントの発行を行います。
- *
- * 依存関係:
- * - selectionState.js: 選択状態の取得やクリアに使用。
- * - blockData.js: BlockDataクラス定義。
- * - historyManager.js: アンドゥ履歴登録 (`addAction`) に使用。
- * - blockRenderer.js: メッシュ作成 (`createBlockMesh`) に使用。
- * - blockDefinitions.js: ブロック定義情報取得 (`getBlockDefinition`) に使用。
+ * 対称編集とアンドゥ・リドゥのための履歴登録も考慮します。
  */
 
 import * as THREE from 'three';
-// 選択状態の取得やクリアのために selectionState をインポート
-import { getSelectedBlocks, clearSelection } from './selectionState.js';
-// ブロックデータのクラス定義をインポート
+// 選択状態の取得やクリアのため (削除時に使用)
+import { getSelectedBlocks, clearSelection } from '../interactions/selectionState.js';
+// ブロックデータのクラス定義
 import { BlockData } from '../data/blockData.js';
-// 履歴管理システムのアクション追加関数をインポート
+// アンドゥ/リドゥ履歴管理
 import { addAction } from '../state/historyManager.js';
-// ブロックの種類に応じたメッシュを作成する関数をレンダラーからインポート
+// メッシュ生成用レンダラー関数
 import { createBlockMesh } from '../rendering/blockRenderer.js';
-// メッシュ更新時にオフセット情報を参照するため blockDefinitions をインポート
+// ブロック定義取得 (メッシュのオフセット計算などに必要)
 import { getBlockDefinition } from '../data/blockDefinitions.js';
+// 対称編集の状態とヘルパー関数
+import { getActiveSymmetryAxes, getSymmetricPosition, getSymmetricRotation } from '../state/symmetryState.js';
 
 /**
  * 指定された位置と向きで新しいブロックをワークベンチに配置します。
- * loadedBlocks 配列と 3D シーンの両方を更新します。
- * 履歴登録を制御し、操作完了後に 'blocksChanged' イベントを発行します。
+ * 対称編集が有効な場合は、対称な位置にもブロックを配置します。
+ * 一連の配置操作は、単一のアンドゥ単位として登録されます (isHistoryAction=falseの場合)。
  *
- * @param {THREE.Vector3} positionThreeJs - 配置する位置（Three.js座標系、整数座標であるべき）。
- * @param {THREE.Matrix4} orientationMatrix - 配置する向き（Three.js座標系、回転行列）。
- * @param {string} blockDefinitionId - 配置するブロックの種類ID (例: '01_block')。
- * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (この配列が直接変更されます)。
+ * @param {THREE.Vector3} positionThreeJs - 配置位置 (Three.js ワールド座標系、整数値想定)。
+ * @param {THREE.Matrix4} orientationMatrix - 配置向き (Three.js ワールド座標系、回転行列)。
+ * @param {string} blockDefinitionId - 配置するブロックの定義ID。
+ * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (この配列が変更されます)。
  * @param {THREE.Scene} scene - 3Dシーンオブジェクト (メッシュ追加用)。
- * @param {boolean} [isHistoryAction=false] - この関数がアンドゥ/リドゥ操作によって呼び出されたか、
- * または他の複合操作 (例: ペースト) の一部かを示すフラグ。
- * trueの場合、この関数内ではアンドゥ履歴登録とイベント発行を行いません。
- * @returns {BlockData | null} 配置に成功した場合は新しく作成されたBlockDataインスタンス、失敗した場合はnull。
+ * @param {boolean} [isHistoryAction=false] - この関数がアンドゥ/リドゥ操作または内部の対称配置処理によって呼び出されたかを示すフラグ。trueの場合、この関数内では履歴登録を行わない。
+ * @returns {BlockData | null} 最初に（主として）配置したブロックのBlockDataインスタンス。配置に失敗した場合はnull。
  */
 export function placeBlock(positionThreeJs, orientationMatrix, blockDefinitionId, loadedBlocks, scene, isHistoryAction = false) {
     // --- 1. 配置位置の重複チェック ---
-    // 指定された整数座標に既にブロックが存在しないかを確認
+    // 指定された位置に既にブロックが存在するか確認
     const isOccupied = loadedBlocks.some(block => block.position.equals(positionThreeJs));
     if (isOccupied) {
-        // 既にブロックがある場合は警告を出し、配置失敗として null を返す
-        console.warn(`[BlockActions] 配置しようとした位置 ${positionThreeJs.x},${positionThreeJs.y},${positionThreeJs.z} は既に占有されています。`);
-        return null;
+        // console.warn(`[BlockActions] 配置位置 ${positionThreeJs.x},${positionThreeJs.y},${positionThreeJs.z} は占有済。`);
+        return null; // 既にブロックがあれば配置失敗
     }
 
-    // --- 2. BlockDataインスタンスの作成 ---
-    // コンストラクタはXML座標を期待するため、Three.js座標から変換
+    // --- 2. BlockDataインスタンスの作成 (主ブロック) ---
+    // BlockDataコンストラクタはXML座標系を期待するため変換
     const positionXml = {
         x: Math.round(positionThreeJs.x),
         y: Math.round(positionThreeJs.y),
-        z: Math.round(-positionThreeJs.z) // Z座標の符号を反転
+        z: Math.round(-positionThreeJs.z) // Z座標の符号反転
     };
-    // BlockData オブジェクトを生成
-    const newBlock = new BlockData(
+    // 新しいBlockDataインスタンス生成
+    const primaryBlock = new BlockData(
         blockDefinitionId,
         positionXml,
-        null, // rotationString は使わない
-        "0", // colorString (デフォルト)
-        orientationMatrix // 初期向きは Matrix4 で指定
+        null, // rotationStringは不要 (Matrix4で指定)
+        "0",  // colorString (デフォルト)
+        orientationMatrix // 初期向き
     );
 
-    // --- 3. 内部データ配列の更新 ---
-    // アプリケーションのメインブロックリストに新しい BlockData を追加
-    loadedBlocks.push(newBlock);
+    // --- 3. 内部データ配列への追加 (主ブロック) ---
+    loadedBlocks.push(primaryBlock);
 
-    // --- 4. 3Dシーンへのメッシュ追加 ---
-    // ブロック定義に基づいて3Dメッシュを作成
-    const mesh = createBlockMesh(newBlock);
-    // 作成したメッシュへの参照を BlockData に保持
-    newBlock.mesh = mesh;
-    // シーンにメッシュを追加
-    scene.add(mesh);
-    // メッシュのワールド行列を BlockData の状態に合わせて更新
-    newBlock.updateMeshMatrix();
+    // --- 4. 3Dシーンへのメッシュ追加 (主ブロック) ---
+    const primaryMesh = createBlockMesh(primaryBlock); // レンダラーに依頼
+    primaryBlock.mesh = primaryMesh; // BlockDataにメッシュ参照を保持
+    scene.add(primaryMesh);           // シーンに追加
+    primaryBlock.updateMeshMatrix(); // 正しい位置・向きに更新
+    console.log(`[BlockActions] 主ブロック配置完了: ID ${primaryBlock.id}, Def: ${primaryBlock.definitionId}`);
 
-    console.log(`[BlockActions] ブロック配置完了: ID ${newBlock.id}, Def: ${newBlock.definitionId}`);
-
-    // --- 5. アンドゥ履歴登録とイベント発行 ---
-    // 通常の配置操作の場合のみ実行 (Undo/Redo時や複合操作時はスキップ)
+    // --- 5. 対称編集処理 ---
+    /** @type {BlockData[]} 対称編集によって実際に追加されたブロックのリスト */
+    const symmetricBlocksPlaced = [];
+    // isHistoryAction が false (＝通常の配置操作) の場合のみ対称配置を実行
     if (!isHistoryAction) {
-        // a) アンドゥ用に BlockData の情報をディープコピーして保存
-        const addedBlockDataCopy = {
-            id: newBlock.id,
-            definitionId: newBlock.definitionId,
-            position: newBlock.position.clone(),
-            rotationMatrix: newBlock.rotationMatrix.clone(),
-            colorIndices: [...newBlock.colorIndices],
-            mesh: null, foregroundMesh: null // メッシュ参照は含めない
-        };
-        addAction({ type: 'ADD_BLOCK', blockData: addedBlockDataCopy });
-        console.log("[BlockActions] アンドゥ履歴 'ADD_BLOCK' 登録。");
+        // 現在有効な対称軸を取得
+        const activeAxes = getActiveSymmetryAxes();
+        if (activeAxes.length > 0) {
+            console.log(`[BlockActions] 対称編集軸: ${activeAxes.join(', ')} で配置試行`);
+            // 各有効な軸についてループ
+            activeAxes.forEach(axis => {
+                // a) 対称な位置と回転を計算
+                const symmetricPosition = getSymmetricPosition(primaryBlock.position, axis);
+                const symmetricRotation = getSymmetricRotation(primaryBlock.rotationMatrix, axis); // 現状はコピー
 
-        // b) ブロック構成が変更されたことを通知するイベントを発行
-        document.dispatchEvent(new CustomEvent('blocksChanged', { detail: { action: 'place', blockId: newBlock.id } }));
-        console.log("[BlockActions] 'blocksChanged' イベント発行 (placeBlock)");
+                // b) 配置可能かチェック
+                //    - 対称位置が元の位置と同じでない (対称面上ではない)
+                //    - 対称位置に既にブロックが存在しない
+                if (!symmetricPosition.equals(primaryBlock.position) &&
+                    !loadedBlocks.some(b => b.position.equals(symmetricPosition)))
+                {
+                    // c) placeBlock を再帰呼び出しして対称ブロックを配置
+                    //    ★必ず isHistoryAction = true を渡す！
+                    const symmetricBlock = placeBlock(
+                        symmetricPosition, symmetricRotation, blockDefinitionId,
+                        loadedBlocks, scene,
+                        true // 対称ブロック個別では履歴登録しない
+                    );
+                    // d) 配置に成功したらリストに追加
+                    if (symmetricBlock) {
+                        symmetricBlocksPlaced.push(symmetricBlock);
+                        console.log(`[BlockActions] 対称ブロック (${axis}軸) 配置完了: ID ${symmetricBlock.id}`);
+                    }
+                } else {
+                    // console.log(`[BlockActions] 対称位置 (${axis}軸) は配置済みまたは同一のためスキップ`);
+                }
+            });
+        }
+    } // --- End of 対称編集処理 ---
+
+    // --- 6. アンドゥ履歴の登録 ---
+    // isHistoryAction が false (＝最初の呼び出し) の場合のみ履歴登録
+    if (!isHistoryAction) {
+        // 主ブロックと、対称配置で追加された全てのブロックの情報を一つのアクションとして登録
+        const placedBlocksInfo = [primaryBlock, ...symmetricBlocksPlaced].map(block => ({
+            // アンドゥ/リドゥに必要な情報のみをコピーして保存
+            id: block.id,
+            definitionId: block.definitionId,
+            position: block.position.clone(),
+            rotationMatrix: block.rotationMatrix.clone(),
+            colorIndices: [...block.colorIndices],
+            mesh: null, // 参照は含めない
+            foregroundMesh: null
+        }));
+
+        // 新しいアクションタイプ 'PLACE_SYMMETRY' で登録
+        addAction({
+            type: 'PLACE_SYMMETRY',
+            placedBlocksData: placedBlocksInfo // 追加された全ブロックの情報配列
+        });
+        console.log(`[BlockActions] アンドゥ履歴 'PLACE_SYMMETRY' 登録 (${placedBlocksInfo.length} ブロック)`);
+
+        // --- 7. ブロック変更イベント発行 ---
+        // 他のモジュール(情報表示など)に変更を通知
+        document.dispatchEvent(new CustomEvent('blocksChanged', {
+            detail: { action: 'place_symmetry', count: placedBlocksInfo.length }
+        }));
+        console.log("[BlockActions] 'blocksChanged' イベント発行 (placeBlock - symmetry)");
     }
 
-    // 配置した BlockData インスタンスを返す
-    return newBlock;
+    // 最初に配置した主ブロックの参照を返す
+    return primaryBlock;
 }
 
 
 /**
  * 指定されたBlockDataオブジェクトをワークベンチから削除します。
- * loadedBlocks 配列と 3D シーンの両方から削除します。
- * 履歴登録を制御し、完了後に 'blocksChanged' イベントを発行します。
+ * 対称編集が有効な場合は、対称な位置にあるブロックも同時に削除します。
+ * 一連の削除操作は、単一のアンドゥ単位として登録されます (isHistoryAction=falseの場合)。
  *
- * @param {BlockData} blockDataToDelete - 削除対象のブロックデータ。
- * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (この配列が直接変更されます)。
- * @param {THREE.Scene} scene - 3Dシーンオブジェクト (メッシュ削除用)。
- * @param {boolean} [isHistoryAction=false] - この関数がアンドゥ/リドゥ操作によって呼び出されたか、
- * または他の複合操作 (例: カット) の一部かを示すフラグ。
- * trueの場合、この関数内ではアンドゥ履歴登録とイベント発行を行いません。
- * @returns {boolean} 削除が成功した場合はtrue、失敗した場合はfalse。
+ * @param {BlockData} blockDataToDelete - 削除対象の主ブロックデータ。
+ * @param {BlockData[]} loadedBlocks - 現在のブロックデータ配列 (この配列が変更されます)。
+ * @param {THREE.Scene} scene - 3Dシーンオブジェクト。
+ * @param {boolean} [isHistoryAction=false] - 履歴操作か複合操作の一部か。trueなら履歴登録しない。
+ * @returns {boolean} 少なくとも主ブロックの削除が成功した場合はtrue。
  */
 export function deleteBlock(blockDataToDelete, loadedBlocks, scene, isHistoryAction = false) {
-    // 削除対象が有効かチェック
+    // 削除対象のデータが存在するかチェック
     if (!blockDataToDelete) {
         console.warn("[BlockActions] 削除対象のブロックが指定されていません。");
         return false;
     }
 
-    // --- 1. アンドゥ履歴の登録 (通常の削除操作の場合のみ) ---
-    let deletedBlockDataCopy = null; // アンドゥ用に削除情報を保持
+    // --- 1. 対称編集処理: 実際に削除するブロックのリストを作成 ---
+    /** @type {BlockData[]} 削除対象となる全ブロックのリスト */
+    const blocksToDeleteList = [blockDataToDelete]; // まず主ブロックを追加
+    // isHistoryAction が false (＝通常の削除操作) の場合のみ対称削除を考慮
     if (!isHistoryAction) {
-        // 削除するブロックの情報をディープコピーして保存
-        deletedBlockDataCopy = {
-             id: blockDataToDelete.id,
-             definitionId: blockDataToDelete.definitionId,
-             position: blockDataToDelete.position.clone(),
-             rotationMatrix: blockDataToDelete.rotationMatrix.clone(),
-             colorIndices: [...blockDataToDelete.colorIndices],
-             mesh: null, foregroundMesh: null // メッシュ参照は不要
-         };
-        addAction({ type: 'DELETE_BLOCK', blockData: deletedBlockDataCopy });
-        console.log("[BlockActions] アンドゥ履歴 'DELETE_BLOCK' 登録。");
+        const activeAxes = getActiveSymmetryAxes(); // 有効な対称軸を取得
+        if (activeAxes.length > 0) {
+             console.log(`[BlockActions] 対称編集軸: ${activeAxes.join(', ')} で削除対象を検索`);
+            activeAxes.forEach(axis => {
+                // 主ブロックの対称位置を計算
+                const symmetricPosition = getSymmetricPosition(blockDataToDelete.position, axis);
+                // 対称位置が元の位置と異なる場合のみ処理
+                if (!symmetricPosition.equals(blockDataToDelete.position)) {
+                    // 対称位置に存在するブロックを探す
+                    const symmetricBlock = loadedBlocks.find(b => b.position.equals(symmetricPosition));
+                    // 見つかり、かつまだ削除リストに含まれていなければ追加
+                    if (symmetricBlock && !blocksToDeleteList.some(b => b.id === symmetricBlock.id)) {
+                        blocksToDeleteList.push(symmetricBlock);
+                        console.log(`[BlockActions] 対称ブロック (${axis}軸) を削除リストに追加: ID ${symmetricBlock.id}`);
+                    }
+                }
+            });
+        }
     }
 
-    // --- 2. 内部データ配列から削除 ---
-    const index = loadedBlocks.findIndex(block => block.id === blockDataToDelete.id);
-    if (index !== -1) {
-        loadedBlocks.splice(index, 1); // spliceで元の配列から削除
-    } else {
-        console.warn(`[BlockActions] 削除対象のブロック (ID: ${blockDataToDelete.id}) が loadedBlocks 配列内に見つかりません。`);
-        // 見つからなくても、シーンからのメッシュ削除は試みる
-    }
+    // --- 2. 削除処理の実行 と アンドゥ用情報作成 ---
+    /** @type {Array<object>} アンドゥ用に削除されるブロックの情報を保持 */
+    const deletedInfoList = [];
+    /** @type {Set<number>} 削除対象ブロックのIDセット (効率的な検索用) */
+    const blockIdsToDelete = new Set(blocksToDeleteList.map(b => b.id));
+    /** @type {number} 実際に削除されたブロックの数 */
+    let deletedCount = 0;
+    /** @type {number[]} 元の配列で削除対象だった要素のインデックスリスト */
+    const indicesToRemove = [];
 
-    // --- 3. 3Dシーンからメッシュを削除 & リソース解放 ---
-    const meshToRemove = blockDataToDelete.mesh;
-    const fgMeshToRemove = blockDataToDelete.foregroundMesh;
-
-    // 通常メッシュの削除
-    if (meshToRemove && meshToRemove.parent) {
-        scene.remove(meshToRemove);
-        // クローンされたマテリアルのみ破棄 (共有マテリアルは破棄しない)
-        if (meshToRemove.material && typeof meshToRemove.material.dispose === 'function') {
-            const matName = meshToRemove.material.name || '';
-            if(matName !== 'unknownMaterial' && !matName.includes('Base')) {
-                 // meshToRemove.material.dispose(); // 再利用されるケースも考慮し一旦保留
+    // loadedBlocks 配列を走査し、削除対象を特定・処理
+    loadedBlocks.forEach((block, index) => {
+        if (blockIdsToDelete.has(block.id)) {
+            indicesToRemove.push(index); // 削除するインデックスを記録
+            // アンドゥ用情報をディープコピーして保存
+            deletedInfoList.push({
+                id: block.id, definitionId: block.definitionId, position: block.position.clone(),
+                rotationMatrix: block.rotationMatrix.clone(), colorIndices: [...block.colorIndices],
+                mesh: null, foregroundMesh: null
+            });
+            // メッシュをシーンから削除 & リソース破棄
+            if (block.mesh && block.mesh.parent) {
+                scene.remove(block.mesh);
+                if (block.mesh.material && typeof block.mesh.material.dispose === 'function') {
+                    const matName = block.mesh.material.name || '';
+                    if(matName !== 'unknownMaterial' && !matName.includes('Base')) { /* Dispose */ }
+                }
+                block.mesh = null;
             }
+            if (block.foregroundMesh && block.foregroundMesh.parent) {
+                scene.remove(block.foregroundMesh);
+                if (block.foregroundMesh.material && typeof block.foregroundMesh.material.dispose === 'function') {
+                    block.foregroundMesh.material.dispose();
+                }
+                block.foregroundMesh = null;
+            }
+            deletedCount++; // 削除カウンターを増やす
         }
-        blockDataToDelete.mesh = null; // 参照をクリア
-    }
-    // 前景メッシュの削除 (XML編集モードで使用)
-    if (fgMeshToRemove && fgMeshToRemove.parent) {
-        scene.remove(fgMeshToRemove);
-        if (fgMeshToRemove.material && typeof fgMeshToRemove.material.dispose === 'function') {
-            fgMeshToRemove.material.dispose(); // 前景はクローンされているはずなので破棄
-        }
-        blockDataToDelete.foregroundMesh = null; // 参照をクリア
+    });
+
+    // --- 3. loadedBlocks 配列から実際に削除 ---
+    if (deletedCount > 0) {
+        // インデックスが大きい方から削除することで、削除によるインデックスのずれを防ぐ
+        indicesToRemove.sort((a, b) => b - a); // 降順ソート
+        indicesToRemove.forEach(index => loadedBlocks.splice(index, 1));
+        console.log(`[BlockActions] ${deletedCount} 個のブロック (対称含む) を削除しました。`);
+    } else {
+         // 主ブロックが loadedBlocks に見つからなかった場合 (エラーケース)
+         console.warn(`[BlockActions] 削除対象の主ブロックが見つかりませんでした: ID ${blockDataToDelete.id}`);
+         return false; // 削除失敗
     }
 
-    // --- 4. 選択状態の更新 ---
-    // 削除したブロックが選択されていた場合、意図しない動作を防ぐために選択を解除する
+    // --- 4. アンドゥ履歴の登録 ---
+    // isHistoryAction が false で、実際にブロックが削除された場合のみ登録
+    if (!isHistoryAction && deletedInfoList.length > 0) {
+        addAction({
+            type: 'DELETE_SYMMETRY', // 新しいアクションタイプ
+            deletedBlocksData: deletedInfoList // 削除された全ブロックの情報
+        });
+        console.log(`[BlockActions] アンドゥ履歴 'DELETE_SYMMETRY' 登録 (${deletedInfoList.length} ブロック)`);
+
+        // --- 5. ブロック変更イベント発行 ---
+        document.dispatchEvent(new CustomEvent('blocksChanged', {
+            detail: { action: 'delete_symmetry', count: deletedInfoList.length }
+        }));
+        console.log("[BlockActions] 'blocksChanged' イベント発行 (deleteBlock - symmetry)");
+    }
+
+    // --- 6. 選択解除 ---
+    // 削除されたブロックが選択されていた場合は選択をクリア
     const currentSelection = getSelectedBlocks();
-    if (currentSelection.some(b => b.id === blockDataToDelete.id)) {
-        console.warn("[BlockActions] 削除されたブロックが選択されていました。選択状態をクリアします。");
-        // TODO: より洗練された方法 (選択リストから該当IDのみ削除) を selectionState に実装する
-        clearSelection(); // 現状は全選択解除で対応
-    }
-
-    console.log(`[BlockActions] ブロック削除完了: ID ${blockDataToDelete.id}, Def: ${blockDataToDelete.definitionId}`);
-
-    // --- 5. イベント発行 (通常の削除操作の場合のみ) ---
-    if (!isHistoryAction) {
-        document.dispatchEvent(new CustomEvent('blocksChanged', { detail: { action: 'delete', blockId: blockDataToDelete.id } }));
-        console.log("[BlockActions] 'blocksChanged' イベント発行 (deleteBlock)");
+    if (currentSelection.some(b => blockIdsToDelete.has(b.id))) {
+        console.log("[BlockActions] 削除されたブロックが含まれていたため、選択をクリアします。");
+        clearSelection();
     }
 
     return true; // 削除成功
