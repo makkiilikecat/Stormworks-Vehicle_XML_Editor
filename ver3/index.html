@@ -11,14 +11,34 @@
 
     <div id="inventory-overlay"></div>
 
-    <div id="left-toolbar" class="toolbar">
+    <div id="top-toolbar" class="toolbar">
         <button class="toolbar-button mode-button" data-mode="NORMAL" title="通常モード (Escape)"><span class="icon-text">➕</span></button>
         <button class="toolbar-button mode-button" data-mode="DELETE" title="削除モード (X)"><span class="icon-text">🗑️</span></button>
         <button class="toolbar-button mode-button" data-mode="XML_EDIT" title="XML編集モード (Shift+E)"><span class="icon-text">✏️</span></button>
         <button class="toolbar-button mode-button" data-mode="RANGE_SELECT" title="範囲選択モード (Shift+S)"><span class="icon-text">🔲</span></button>
         <button class="toolbar-button mode-button" data-mode="PAINT" title="ペイントモード (Shift+C)"><span class="icon-text">🎨</span></button>
-        <hr class="horizontal-divider">
         <button id="toggle-stick-button" class="toolbar-button active" title="移動スティック表示切替"><span class="icon-text">🕹️</span></button>
+    </div>
+
+    <div id="left-toolbar" class="toolbar">
+        <button class="toolbar-button paint-tool-button active" data-paint-tool="normal" title="通常ペイント"><span class="icon-text">🖌️</span></button>
+        <button class="toolbar-button paint-tool-button" data-paint-tool="special" title="特殊ペイント(Additive)"><span class="icon-text">✨</span></button>
+        <button class="toolbar-button paint-tool-button" data-paint-tool="replace" title="色置き換え"><span class="icon-text">🔄</span></button>
+        <hr class="horizontal-divider">
+        <div id="color-palette-container">
+            <button class="color-swatch" data-color="C2C3C7" style="background-color: #C2C3C7;" title="#C2C3C7"></button>
+            <button class="color-swatch" data-color="FF0000" style="background-color: #FF0000;" title="#FF0000"></button>
+            <button class="color-swatch" data-color="00FF00" style="background-color: #00FF00;" title="#00FF00"></button>
+            <button class="color-swatch" data-color="0000FF" style="background-color: #0000FF;" title="#0000FF"></button>
+            </div>
+        <hr class="horizontal-divider">
+        <button id="toggle-rgb-sliders-button" class="toolbar-button" title="RGBスライダー表示切替"><span class="icon-text">🔧</span></button>
+        <div id="rgb-sliders-container" style="display: none;">
+            <div>R: <input type="range" id="slider-r" min="0" max="255"> <span id="value-r">--</span></div>
+            <div>G: <input type="range" id="slider-g" min="0" max="255"> <span id="value-g">--</span></div>
+            <div>B: <input type="range" id="slider-b" min="0" max="255"> <span id="value-b">--</span></div>
+            <div id="color-preview" style="width: 30px; height: 30px; border: 1px solid #fff; margin-top: 5px;"></div>
+        </div>
     </div>
 
     <div id="right-toolbar" class="toolbar">
@@ -26,7 +46,7 @@
         <button class="toolbar-button range-only" data-action="CUT" title="カット (Ctrl+X)" style="display: none;"><span class="icon-text">✂️</span></button>
         <button class="toolbar-button range-only" data-action="PASTE" title="ペースト (Ctrl+V)" style="display: none;"><span class="icon-text">📋</span></button>
         <button class="toolbar-button range-only" data-action="CLEAR_CLIPBOARD" title="クリップボードクリア (Shift+Q)" style="display: none;"><span class="icon-text">❌</span></button>
-        <hr class="range-only" style="display: none;">
+        <hr class="horizontal-divider range-only" style="display: none;">
         <button class="toolbar-button" data-action="UNDO" title="元に戻す (Ctrl+Z)"><span class="icon-text">↩️</span></button>
         <button class="toolbar-button" data-action="REDO" title="やり直し (Ctrl+Y)"><span class="icon-text">↪️</span></button>
         <hr class="horizontal-divider">
@@ -73,7 +93,6 @@
             XML編集 (選択ブロック)
             <button id="toggle-xml-panel" title="パネルを格納/展開">^</button>
         </h4>
-
         <div class="edit-section fixed-prop-section">
             <label>座標 (vp):</label>
             <div class="vector3-input">
@@ -96,9 +115,7 @@
                 <div> <input type="number" step="1" id="edit-r-13" data-property-name="r.0.2" data-property-source="standard" data-property-type="number" title="r[1,3]"> <input type="number" step="1" id="edit-r-23" data-property-name="r.1.2" data-property-source="standard" data-property-type="number" title="r[2,3]"> <input type="number" step="1" id="edit-r-33" data-property-name="r.2.2" data-property-source="standard" data-property-type="number" title="r[3,3]"> </div>
             </div>
         </div>
-
         <div id="xml-edit-dynamic-props" class="dynamic-props-container"></div>
-
         <div id="xml-edit-info" class="info-text">ブロックを選択してください。</div>
     </div>
 
@@ -127,7 +144,6 @@
             }
         }
     </script>
-
     <script type="module" src="js/main.js"></script>
 
 </body>
