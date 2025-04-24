@@ -135,6 +135,49 @@ function createPyramidGeometry(size) {
 }
 
 /**
+ * 指定サイズの逆ピラミッドジオメトリを生成します。
+ * 立方体から角の三角錐を取り除いた形状です。
+ * (Y軸+90度回転し、さらにY軸反転済み)
+ * @param {number[]} size - [width, height, depth]。
+ * @returns {THREE.BufferGeometry}
+ */
+function createInvPyramidGeometry(size) {
+    const [width, height, depth] = size;
+    const hw = width / 2, hh = height / 2, hd = depth / 2; // 半分のサイズ
+
+    const geometry = new THREE.BufferGeometry();
+    // 頂点座標 (Y軸+90度回転後、さらにY座標を反転)
+    const vertices = new Float32Array([
+        -hd,  hh, -hw, // 0
+        -hd, -hh,  hw, // 1
+         hd,  hh,  hw, // 2
+        -hd, -hh, -hw, // 3
+         hd,  hh, -hw, // 4
+         hd, -hh,  hw, // 5
+         hd, -hh, -hw, // 6
+    ]);
+
+    // 面インデックス (頂点のトポロジーは変わらないため、インデックスは同じ)
+    const indices = [
+        // 正方形 (3面)
+        3, 0, 4,  3, 4, 6,
+        5, 1, 3,  5, 3, 6,
+        6, 4, 2,  6, 2, 5,
+        // 直角二等辺三角形 (3面)
+        3, 1, 0,
+        0, 2, 4,
+        5, 2, 1,
+        // 正三角形 (切り口)
+        0, 1, 2
+    ];
+
+    geometry.setIndex(indices);
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.computeVertexNormals(); // 法線を自動計算
+    return geometry;
+}
+
+/**
  * 未対応ブロック用の代替立方体ジオメトリ (1x1x1固定)。
  * @param {number[]} size - [width, height, depth] (未使用)。
  * @returns {THREE.BoxGeometry}
@@ -165,6 +208,8 @@ export function getBlockGeometry(type, size) {
             return getOrCreateGeometry(type, validSize, createWedgeGeometry);
         case 'pyramid':
             return getOrCreateGeometry(type, validSize, createPyramidGeometry);
+        case 'invpyramid':
+            return getOrCreateGeometry(type, validSize, createInvPyramidGeometry);
         case 'unknown_cube':
         default:
              // 未対応は常に 1x1x1

@@ -62,16 +62,24 @@ export function rotationMatrixFromXmlElements(elementsXml) {
 
 /**
  * XMLのr属性文字列をThree.jsのMatrix4に変換します。
- * @param {string} rString - "r11,r21,r31,..." 形式の文字列。
+ * r属性が省略されている場合は、デフォルト値 "0,0,-1,-1,0,0,0,-1,0" を使用します。
+ * @param {string | null} rString - "r11,r21,r31,..." 形式の文字列、またはnull。
  * @returns {THREE.Matrix4} Three.jsのMatrix4。
  */
 export function rotationMatrixFromXmlString(rString) {
-    if (!rString) return new THREE.Matrix4().identity();
+    if (!rString) {
+        // r属性がない場合のデフォルト値を設定
+        const defaultValues = [0, 0, -1, -1, 0, 0, 0, -1, 0];
+        //console.warn("XMLの'r'属性が省略されています。デフォルト値 '0,0,-1,-1,0,0,0,-1,0' を使用します。");
+        // デフォルト値を rotationMatrixFromXmlElements を使って Matrix4 に変換して返す
+        return rotationMatrixFromXmlElements(defaultValues);
+    }
+    // r属性が存在する場合の処理
     const values = rString.split(',').map(Number);
-     if (values.length === 9 && values.every(v => !isNaN(v))) {
-         // 文字列はXML要素と同じ並びだと仮定
-         return rotationMatrixFromXmlElements(values.map(Math.round)); // 念のため整数化
-     }
-     console.warn(`Invalid rotation matrix string: "${rString}". Returning identity.`);
-     return new THREE.Matrix4().identity();
+    if (values.length === 9 && values.every(v => !isNaN(v))) {
+        // 文字列はXML要素と同じ並びだと仮定
+        return rotationMatrixFromXmlElements(values.map(Math.round)); // 念のため整数化
+    }
+    console.warn(`無効な回転行列文字列です: "${rString}"。単位行列を返します。`);
+    return new THREE.Matrix4().identity(); // パース失敗時は単位行列
 }

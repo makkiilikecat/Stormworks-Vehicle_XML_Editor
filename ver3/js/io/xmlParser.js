@@ -44,6 +44,7 @@ export function parseVehicleXml(xmlString) {
         // --- 基本情報の抽出 ---
         const definitionId = cElement.getAttribute('d') || '01_block';
         const tAttributeValue = cElement.getAttribute('t');
+        //console.log("t: ", tAttributeValue)
         const rotationString = oElement.getAttribute('r');
         const colorString = oElement.getAttribute('sc');
         const positionXml = {

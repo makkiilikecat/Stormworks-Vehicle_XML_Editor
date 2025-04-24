@@ -187,7 +187,7 @@ export function updateGizmoDrag(event, appState) {
                 else if (face === '-z') newBoundaryValue = rangeDragState.startBox.max.z - dragDistance; // Z-はmax.zを更新(符号反転)
 
                 // 新しい境界値を整数に丸める
-                const roundedBoundary = Math.round(newBoundaryValue);
+                const roundedBoundary = Math.round(newBoundaryValue)+0.5;
 
                 // ★注意: クランプ処理 (最小サイズ維持、反転防止) はユーザーのコードでは削除されているため、ここでも削除
                 // 反転を許容し、最小サイズ制限なし

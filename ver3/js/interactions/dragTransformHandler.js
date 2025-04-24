@@ -1,10 +1,23 @@
 /**
- * @fileoverview ドラッグによるブロック変形操作 (せん断・伸縮) のイベントハンドリング。
- * マウスイベントを捕捉し、変形計算モジュールを呼び出し、
- * リアルタイム表示 (前景キューブ) とゴースト表示、最終的な状態更新を行う。
+ * @fileoverview XML編集モードにおけるドラッグによるブロック変形操作
+ * (せん断 - Shear / 伸縮 - Stretch) のイベントハンドリングを担当します。
+ * マウスイベント (PointerDown, PointerMove, PointerUp) を捕捉し、
+ * 変形計算モジュール (dragTransformCalculations.js) を呼び出します。
+ * 操作中は、変形状態を示す 変形プレビューゴースト と、操作対象の 編集キューブ を
+ * リアルタイムで更新します。
+ * 操作確定時には、BlockData の状態 (position, rotationMatrix) を更新し、
+ * アンドゥ履歴に登録します。
+ *
+ * 依存関係:
+ * - selectionState.js: getSelectedBlocks
+ * - editMode.js: getCurrentMode, EditMode
+ * - ghostBlock.js: showGhostBlock, updateGhostBlockTransform, hideGhostBlock (変形プレビューゴースト用)
+ * - mathUtils.js: roundAndClampMatrix, getLocalAxisInfoFromWorldNormal, getFaceCenterWorld
+ * - historyManager.js: addAction
+ * - dragState.js: dragState, resetDragState (ドラッグ中の状態管理)
+ * - dragTransformCalculations.js: applyShearTransform, applyStretchTransform (実際の変形計算)
  */
 import * as THREE from 'three';
-// 状態管理とヘルパー関数をインポート
 import { getSelectedBlocks } from './selectionState.js';
 import { EditMode, getCurrentMode } from '../state/editMode.js';
 import { showGhostBlock, updateGhostBlockTransform, hideGhostBlock } from '../rendering/ghostBlock.js';
@@ -13,62 +26,79 @@ import { addAction } from '../state/historyManager.js';
 import { dragState, resetDragState } from './dragState.js';
 import { applyShearTransform, applyStretchTransform } from './dragTransformCalculations.js';
 
-// --- Raycasting用 (このファイル内でのみ使用) ---
+// --- Raycasting用 (このモジュール内でのみ使用) ---
 const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2(); // 正規化デバイス座標 (-1 to +1)
+const mouse = new THREE.Vector2(); // マウス座標 (正規化デバイス座標)
 
 // --- プライベート ヘルパー関数 ---
 
 /**
- * マウスイベントから正規化デバイス座標を取得します。
- * @param {PointerEvent} event - マウスイベント。
- * @param {HTMLElement} domElement - レンダラーのDOM要素 (Canvas)。
+ * マウスイベントから正規化デバイス座標 (NDC) を取得します。
+ * NDC は Three.js の Raycasting で使用され、(-1, -1) が左下、(1, 1) が右上に対応します。
+ * @param {PointerEvent} event - マウスイベント (pointerdown, pointermove など)。
+ * @param {HTMLElement} domElement - レンダラー (Canvas) の DOM 要素。座標計算の基準。
  * @returns {THREE.Vector2} 正規化デバイス座標。
  * @private
  */
 function getMouseNDC(event, domElement) {
-    const rect = domElement.getBoundingClientRect();
+    const rect = domElement.getBoundingClientRect(); // Canvas の画面上の位置とサイズを取得
+    // マウスのクライアント座標を Canvas 内の相対座標に変換し、さらにNDC(-1~1)に変換
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1; // Y軸は上下反転
     return mouse;
 }
 
 /**
- * 指定されたマウス座標にあるブロック面情報を取得します。
- * Raycasting を行い、交差した面の法線や中心座標などを返します。
+ * 指定されたマウス座標にある 編集キューブ の面情報を取得します。
+ * Raycasting を行い、交差した点の座標、面のワールド法線、ローカル軸情報、面の中心座標を返します。
  * @param {THREE.Vector2} mouseCoords - 正規化デバイス座標。
- * @param {THREE.Camera} camera - シーンのカメラ。
- * @param {BlockData} targetBlockData - 対象のブロックデータ。
- * @returns {object | null} 面情報 { point, normal, axisInfo, center } または null (交差しない/不正な法線の場合)。
+ * @param {THREE.Camera} camera - シーンのカメラ。Raycasting の起点。
+ * @param {BlockData} targetBlockData - 対象のブロックデータ。前景メッシュ (編集キューブ) を使用。
+ * @returns {object | null} 面情報 { point, normal, axisInfo, center }。交差しない、または法線が無効な場合は null。
  * @private
  */
 function getIntersectedFaceInfo(mouseCoords, camera, targetBlockData) {
-    // 対象ブロックに前景メッシュがなければ処理しない
+    // 編集キューブ (foregroundMesh) がなければ処理不可
     if (!targetBlockData?.foregroundMesh) {
-        console.warn("[DragHandler] 変形対象の前景メッシュが見つかりません。", targetBlockData);
+        console.warn("[DragHandler] 変形対象の編集キューブが見つかりません。", targetBlockData);
         return null;
     }
-    // Raycasting設定
+    // Raycaster を設定 (カメラ位置とマウス座標からレイを生成)
     raycaster.setFromCamera(mouseCoords, camera);
-    // 前景キューブとの交差判定
+    // 編集キューブとの交差判定を実行
     const intersects = raycaster.intersectObject(targetBlockData.foregroundMesh);
 
+    // 交差があり、かつ面情報 (face) が取得できた場合
     if (intersects.length > 0 && intersects[0].face) {
-        const i = intersects[0]; // 最も手前の交差情報
-        const m = targetBlockData.foregroundMesh; // 前景メッシュ
-        // ワールド法線を取得 (メッシュのワールド行列を使って変換)
-        const worldNormal = i.face.normal.clone().transformDirection(m.matrixWorld).normalize();
-        // 法線が無効 (NaN や ゼロベクトルに近い) 場合は失敗
+        const intersect = intersects[0]; // 最も手前にある交差情報
+        const mesh = targetBlockData.foregroundMesh; // 編集キューブのメッシュ
+
+        // 交差した面のワールド法線を計算
+        // face.normal (ローカル座標) をメッシュのワールド行列の回転部分で変換
+        const worldNormal = intersect.face.normal.clone()
+                              .transformDirection(mesh.matrixWorld) // ワールド空間での向きに変換
+                              .normalize();                          // 正規化
+
+        // 法線ベクトルが無効 (NaN やゼロベクトルに近い) でないかチェック
         if (isNaN(worldNormal.x) || worldNormal.lengthSq() < 0.5) {
-            console.warn("[DragHandler] 無効な面の法線を検出しました。");
+            console.warn("[DragHandler] 無効な面の法線を検出しました。", worldNormal);
             return null;
         }
-        // ローカル軸情報と面のワールド中心座標を取得
-        const axisInfo = getLocalAxisInfoFromWorldNormal(worldNormal, m.matrix); // ローカル軸
-        const faceCenter = getFaceCenterWorld(m.matrix, axisInfo); // 面の中心
-        return { point: i.point, normal: worldNormal, axisInfo: axisInfo, center: faceCenter };
+
+        // ワールド法線とオブジェクトの行列から、どのローカル軸に対応するかを判定
+        const axisInfo = getLocalAxisInfoFromWorldNormal(worldNormal, mesh.matrix);
+        // 対応する面のワールド中心座標を計算
+        const faceCenter = getFaceCenterWorld(mesh.matrix, axisInfo);
+
+        // 必要な情報をまとめて返す
+        return {
+            point: intersect.point, // 交差点 (ワールド座標)
+            normal: worldNormal,    // 面のワールド法線ベクトル
+            axisInfo: axisInfo,     // { axisIndex: number (0-2), sign: number (+1 or -1) }
+            center: faceCenter      // 面の中心 (ワールド座標)
+        };
     }
-    // 交差なし
+    // 交差がなかった場合
     return null;
 }
 
@@ -77,75 +107,84 @@ function getIntersectedFaceInfo(mouseCoords, camera, targetBlockData) {
 
 /**
  * ポインターダウンイベントを処理し、ドラッグ変形を開始します。
- * XML編集モードで、かつ単一ブロックが選択されている場合にのみ動作します。
+ * XML編集モードで、単一ブロックが選択され、かつ編集キューブの面をクリックした場合に開始します。
  * @param {PointerEvent} event - PointerEvent オブジェクト。
  * @param {THREE.Camera} camera - シーンのカメラ。
- * @param {THREE.Scene} scene - シーンオブジェクト (ゴースト表示用)。
+ * @param {THREE.Scene} scene - シーンオブジェクト (変形プレビューゴースト表示用)。
  * @param {HTMLElement} domElement - レンダラーのDOM要素 (Canvas)。
- * @param {Function} disableControls - OrbitControls無効化コールバック関数。
+ * @param {Function} disableControls - OrbitControls を無効化するためのコールバック関数。
  * @returns {boolean} ドラッグ変形を開始した場合は true、それ以外は false。
  */
 export function handleDragTransformPointerDown(event, camera, scene, domElement, disableControls) {
-    // XML編集モード以外、または左ボタン以外の場合は処理しない
+    // XML編集モード以外、またはマウスの左ボタン以外の場合は何もしない
     if (getCurrentMode() !== EditMode.XML_EDIT || event.button !== 0) return false;
     // 選択中のブロックを取得
     const selected = getSelectedBlocks();
-    // 単一選択でない場合は処理しない
+    // 選択数が1でない場合は何もしない
     if (selected.length !== 1) return false;
 
     const targetBlockData = selected[0]; // 変形対象のブロックデータ
-    const mouseNDC = getMouseNDC(event, domElement); // マウス座標取得
-    // マウス下の面情報を取得
+    const mouseNDC = getMouseNDC(event, domElement); // マウス座標をNDCに変換
+    // マウスカーソル下の面情報を取得
     const faceInfo = getIntersectedFaceInfo(mouseNDC, camera, targetBlockData);
 
-    // 面情報が取得できた場合のみドラッグ開始
+    // 有効な面がクリックされた場合のみドラッグ開始処理へ
     if (faceInfo) {
         console.log("[DragHandler] ドラッグ変形開始");
+
         // --- ドラッグ状態 (dragState) を初期化 ---
-        dragState.isDragging = true;
-        dragState.mode = event.shiftKey ? 'stretch' : 'shear'; // Shiftキーでモード切替
-        dragState.targetBlockData = targetBlockData;
-        dragState.startPointWorld.copy(faceInfo.point); // 開始交点 (ワールド)
-        dragState.startMouseNDC.copy(mouseNDC);       // 開始マウス座標 (NDC)
-        dragState.currentMouseNDC.copy(mouseNDC);     // 現在マウス座標 (NDC)
-        dragState.lastMouseNDC.copy(mouseNDC);        // 前回マウス座標 (NDC)
-        dragState.faceInfo = faceInfo;                // 面情報
-        // 開始時のブロック行列 (前景キューブの行列を使用) を保存
+        dragState.isDragging = true; // ドラッグ中フラグを立てる
+        dragState.mode = event.shiftKey ? 'stretch' : 'shear'; // Shiftキーで伸縮モード、なければせん断モード
+        dragState.targetBlockData = targetBlockData; // 対象ブロックデータを保持
+        dragState.startPointWorld.copy(faceInfo.point); // ドラッグ開始点のワールド座標
+        dragState.startMouseNDC.copy(mouseNDC);       // ドラッグ開始時のマウスNDC
+        dragState.currentMouseNDC.copy(mouseNDC);     // 現在のマウスNDC (初期値は開始時と同じ)
+        dragState.lastMouseNDC.copy(mouseNDC);        // 前回のマウスNDC (初期値は開始時と同じ)
+        dragState.faceInfo = faceInfo;                // クリックされた面の情報
+
+        // 変形計算の基準となる、ドラッグ開始時の行列を保存
+        // (編集キューブの現在の行列を使用)
         dragState.initialBlockMatrix.copy(targetBlockData.foregroundMesh.matrix);
-        // 現在の変形中行列も初期化
+        // 変形中の行列も初期状態にリセット
         dragState.currentTransformedMatrix.copy(dragState.initialBlockMatrix);
 
-        // せん断モード用の平面と開始点を計算
+        // せん断モードの場合、ドラッグ操作用の平面を計算
         if (dragState.mode === 'shear') {
+            // カメラの前方ベクトルを計算
             const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            // カメラに垂直で、クリックされた面の中心を通る平面を定義
             dragState.dragPlaneCameraNormal.setFromNormalAndCoplanarPoint(cameraForward, faceInfo.center);
-            // 交点計算は calculations モジュール内の intersectPlane を使う想定だが、
-            // ここで直接 Raycaster を使っても良い
+            // マウスカーソルのレイがこの平面と交差する点を計算し、ドラッグ開始点とする
             raycaster.setFromCamera(mouseNDC, camera);
             raycaster.ray.intersectPlane(dragState.dragPlaneCameraNormal, dragState.dragStartPointOnPlane);
         }
 
-        // ゴースト表示開始 (丸め・クランプ後の初期状態)
-        dragState.ghostMatrix.copy(dragState.initialBlockMatrix); // 開始時の行列をコピー
-        roundAndClampMatrix(dragState.ghostMatrix);             // 丸め＆クランプ
-        showGhostBlock(scene, dragState.ghostMatrix);           // ゴースト表示
+        // 変形プレビューゴーストの表示を開始
+        // 開始時の行列を元に、整数座標にスナップした状態を表示
+        dragState.ghostMatrix.copy(dragState.initialBlockMatrix);
+        roundAndClampMatrix(dragState.ghostMatrix); // 整数座標に丸め、最小厚みを保証
+        showGhostBlock(scene, dragState.ghostMatrix); // ゴースト表示
 
-        disableControls(); // カメラ操作を無効化
-        document.body.style.cursor = 'grabbing'; // マウスカーソル変更
+        // 操作開始の準備
+        disableControls(); // カメラコントロール(OrbitControls)を無効化
+        document.body.style.cursor = 'grabbing'; // マウスカーソルを変更
         console.log(`[DragHandler] ドラッグモード: ${dragState.mode}, 対象ブロックID: ${targetBlockData.id}`);
         return true; // ドラッグ開始成功
     }
+
+    // 有効な面をクリックしなかった場合
     console.log("[DragHandler] 有効な面が見つからなかったため、ドラッグを開始できません。");
     return false; // ドラッグ開始失敗
 }
 
 /**
- * ポインタームーブイベントを処理し、ドラッグ中の変形を適用します。
- * 前景キューブ (リアルタイム) とゴーストブロック (スナップ後) の表示を更新します。
+ * ポインタームーブイベントを処理し、ドラッグ中の変形を適用・表示更新します。
+ * 編集キューブ (リアルタイムの非スナップ状態) と
+ * 変形プレビューゴースト (スナップ後の状態) の両方を更新します。
  * @param {PointerEvent} event - PointerEvent オブジェクト。
  * @param {THREE.Camera} camera - シーンのカメラ。
  * @param {HTMLElement} domElement - レンダラーのDOM要素 (Canvas)。
- * @param {THREE.Scene} scene - シーンオブジェクト (ゴースト表示用)。
+ * @param {THREE.Scene} scene - シーンオブジェクト (ゴースト表示用だが、直接は使わない)。
  */
 export function handleDragTransformPointerMove(event, camera, domElement, scene) {
     // ドラッグ中でなければ何もしない
@@ -156,110 +195,117 @@ export function handleDragTransformPointerMove(event, camera, domElement, scene)
     dragState.lastMouseNDC.copy(dragState.currentMouseNDC); // 前回座標を保存
     dragState.currentMouseNDC.copy(mouseNDC);             // 現在座標を更新
 
-    // 変形計算を実行 (dragState.currentTransformedMatrix が更新される)
+    // マウス移動量に基づいて変形計算を実行
+    // (dragState.currentTransformedMatrix が内部で更新される)
     if (dragState.mode === 'shear') {
-        applyShearTransform(camera);
+        applyShearTransform(camera); // せん断変形計算
     } else if (dragState.mode === 'stretch') {
-        applyStretchTransform(camera);
+        applyStretchTransform(camera); // 伸縮変形計算
     }
 
-    // ★修正: 前景キューブの行列をリアルタイムで更新 (丸め前)
+    // 編集キューブ の行列をリアルタイムで更新 (スナップ前)
     if (dragState.targetBlockData?.foregroundMesh) {
         dragState.targetBlockData.foregroundMesh.matrix.copy(dragState.currentTransformedMatrix);
-        dragState.targetBlockData.foregroundMesh.matrixWorldNeedsUpdate = true; // ワールド行列更新フラグ
+        dragState.targetBlockData.foregroundMesh.matrixWorldNeedsUpdate = true;
     }
 
-    // ゴーストブロックの表示を更新 (丸め・クランプ後)
+    // 変形プレビューゴースト の表示を更新 (スナップ後)
     dragState.ghostMatrix.copy(dragState.currentTransformedMatrix); // 最新の変形行列をコピー
     roundAndClampMatrix(dragState.ghostMatrix);                 // 丸め＆クランプ
-    updateGhostBlockTransform(dragState.ghostMatrix);           // ゴースト表示更新
+    updateGhostBlockTransform(dragState.ghostMatrix);           // ゴーストの行列を更新
 
-    // ★削除: 背景ゴースト (blockData.mesh) をリアルタイムで動かす処理は不要
-    // if (dragState.targetBlockData?.mesh) {
-    //     dragState.targetBlockData.mesh.matrix.copy(dragState.currentTransformedMatrix);
-    //     dragState.targetBlockData.mesh.matrixWorldNeedsUpdate = true;
-    // }
 }
 
 
 /**
  * ポインターアップイベントを処理し、ドラッグ変形を終了・確定します。
- * BlockData の状態を更新し、アンドゥ履歴に登録します。
- * @param {PointerEvent | null} event - PointerEvent オブジェクト。pointerleave から呼び出された場合は null。
- * @param {Function} enableControls - OrbitControls有効化コールバック関数。
+ * 最終的な状態を BlockData に適用し、アンドゥ履歴に登録します。
+ * @param {PointerEvent | null} event - PointerEvent オブジェクト。pointerleave などで null の場合あり。
+ * @param {Function} enableControls - OrbitControls を有効化するためのコールバック関数。
  */
 export function handleDragTransformPointerUp(event, enableControls) {
-    // ドラッグ中でなければ何もしない
+    // ドラッグ中でなければ終了
     if (!dragState.isDragging) return;
-    // event があり、それが左ボタン以外なら無視 (誤動作防止)
+    // event が存在し、それが左ボタンのリリースでなければ終了 (誤動作防止)
     if (event && event.button !== 0) return;
 
     console.log("[DragHandler] ドラッグ変形終了処理を開始。");
 
     // --- 変更を確定 ---
-    // 最終的な行列はゴースト表示に使っていた丸め・クランプ後の行列
-    const finalMatrix = dragState.ghostMatrix.clone();
-    const targetBlockData = dragState.targetBlockData;
+    // 最終的な姿勢は、変形プレビューゴーストが表示していた、丸め・クランプ後の行列
+    const finalWorldMatrix = dragState.ghostMatrix.clone();
+    const targetBlockData = dragState.targetBlockData; // 操作対象のBlockData
 
-    // アンドゥ用に、変更前のワールド行列 (位置含む) を取得
-    // ★注意: initialBlockMatrix はドラッグ開始時の前景キューブの行列であり、
-    //        BlockData の position は含まれていない。ここで改めて取得する。
+    // --- アンドゥ用に、操作前の BlockData 状態を保存 ---
     const oldPosition = targetBlockData.position.clone();
     const oldRotationMatrix = targetBlockData.rotationMatrix.clone();
-    const oldWorldMatrixForHistory = new THREE.Matrix4();
-    oldWorldMatrixForHistory.copy(new THREE.Matrix4().makeTranslation(oldPosition.x, oldPosition.y, oldPosition.z)).multiply(oldRotationMatrix);
 
+    // 変更があったかどうかを確認するために、操作前のワールド行列も計算
+    // (BlockDataのpositionとrotationMatrixから計算)
+    const _tmpMatrix = new THREE.Matrix4();
+    const oldWorldMatrixCheck = _tmpMatrix.copy(new THREE.Matrix4().makeTranslation(oldPosition.x, oldPosition.y, oldPosition.z)).multiply(oldRotationMatrix);
 
-    // 変更があったか比較 (丸め後なので equals で比較可能)
-    if (!oldWorldMatrixForHistory.equals(finalMatrix)) {
-        console.log("[DragHandler] 最終的な変形を適用します。");
+    // 最終的な行列 (finalWorldMatrix) と操作前の行列 (oldWorldMatrixCheck) を比較
+    if (!oldWorldMatrixCheck.equals(finalWorldMatrix)) {
+        console.log("[DragHandler] 変更あり。最終的な変形を適用します。");
 
-        // 1. アンドゥ履歴に登録
-        addAction({
-            type: 'TRANSFORM_BLOCKS', // タイプは単一/複数回転と同じで良い
-            transformations: [{
-                blockId: targetBlockData.id,
-                oldMatrix: oldWorldMatrixForHistory, // 変更前のワールド行列 (位置含む)
-                newMatrix: finalMatrix.clone()       // 変更後のワールド行列 (位置含む)
-            }]
-        });
-
-        // 2. BlockData の position と rotationMatrix を更新
+        // 1. 最終ワールド行列から、BlockData に保存するための新しい position と rotationMatrix を計算
         const newPosition = new THREE.Vector3();
         const newQuaternion = new THREE.Quaternion();
-        const newScale = new THREE.Vector3();
-        finalMatrix.decompose(newPosition, newQuaternion, newScale); // 位置・回転・スケールを分解
-        targetBlockData.position.copy(newPosition); // 新しい位置を設定
-        targetBlockData.rotationMatrix.compose(new THREE.Vector3(), newQuaternion, newScale); // 回転・スケールのみで Matrix4 を再構成
+        const newScale = new THREE.Vector3(); // スケール/せん断成分
+        finalWorldMatrix.decompose(newPosition, newQuaternion, newScale); // 分解
 
-        // 3. 前景キューブの行列も最終状態に更新
-        if (targetBlockData.foregroundMesh) {
-             targetBlockData.foregroundMesh.matrix.copy(finalMatrix);
-             targetBlockData.foregroundMesh.matrixWorldNeedsUpdate = true;
-        }
+        // 新しい rotationMatrix (回転 + スケール/せん断) を作成
+        // decompose で得た Quaternion と Scale から Matrix4 を再構成
+        const newRotationMatrix = new THREE.Matrix4().compose(
+            new THREE.Vector3(), // 位置は(0,0,0)で
+            newQuaternion,       // 回転
+            newScale             // スケール/せん断
+        );
 
-        // 4. 背景メッシュ (blockData.mesh) の行列も更新
-        //    BlockData の updateMeshMatrix を呼ぶのが正しいため、ここでは不要
-        //    (History適用時に renderBlocks が呼ばれ、その中で updateMeshMatrix が呼ばれる)
-        // targetBlockData.updateMeshMatrix(); // ここで呼ぶと二度手間になる可能性
+        // 2. ★修正: アンドゥ履歴に BlockData の position/rotationMatrix の変化を登録
+        addAction({
+            type: 'TRANSFORM_BLOCKS', // アクションタイプ
+            transformations: [{       // 変更内容の配列 (今回は単一ブロック)
+                blockId: targetBlockData.id, // 対象ブロックID
+                // 操作前の状態
+                oldPosition: oldPosition,             // 操作前の Vector3
+                oldRotationMatrix: oldRotationMatrix, // 操作前の Matrix4
+                // 操作後の状態
+                newPosition: newPosition.clone(),       // 操作後の Vector3
+                newRotationMatrix: newRotationMatrix.clone() // 操作後の Matrix4
+            }]
+        });
+        console.log("[DragHandler] アンドゥ履歴に TRANSFORM_BLOCKS を登録しました。");
 
-        // 5. UI更新イベント発行
+        // 3. BlockData の position と rotationMatrix を新しい値で更新
+        targetBlockData.position.copy(newPosition);
+        targetBlockData.rotationMatrix.copy(newRotationMatrix);
+        console.log(`[DragHandler] Block ID ${targetBlockData.id} の position, rotationMatrix を更新しました。`);
+
+        // 4. 表示更新 (編集キューブと背景ゴーストの両方)
+        // BlockData の updateMeshMatrix を呼び出すことで、関連する両方のメッシュ行列が更新される
+        targetBlockData.updateMeshMatrix();
+        console.log(`[DragHandler] Block ID ${targetBlockData.id} の updateMeshMatrix を呼び出し、表示を更新。`);
+
+        // 5. UI更新イベント発行 (XML編集パネルなどが反応できるように)
         document.dispatchEvent(new CustomEvent('blocktransformupdated', { detail: { blockId: targetBlockData.id } }));
         console.log(`[DragHandler] ブロック ID ${targetBlockData.id} の変形を確定しました。`);
 
     } else {
-        // 変更がなかった場合は、ドラッグ中のリアルタイム変形を元に戻す
+        // 変更がなかった場合 (例: クリックしただけ、元の位置に戻した)
+        // ドラッグ中にリアルタイムで動いていた編集キューブの表示を、操作開始時の状態に戻す
         if (targetBlockData.foregroundMesh) {
-            targetBlockData.foregroundMesh.matrix.copy(oldWorldMatrixForHistory); // 開始時の行列に戻す
+            targetBlockData.foregroundMesh.matrix.copy(oldWorldMatrixCheck);
             targetBlockData.foregroundMesh.matrixWorldNeedsUpdate = true;
         }
         console.log("[DragHandler] 実質的な変更がなかったため、変形は適用されませんでした。");
     }
 
     // --- 状態リセット ---
-    hideGhostBlock();   // ゴースト非表示
-    resetDragState();   // ドラッグ状態リセット
-    enableControls();   // カメラ操作有効化
-    document.body.style.cursor = 'default'; // カーソルを元に戻す
+    hideGhostBlock();       // 変形プレビューゴーストを非表示
+    resetDragState();       // ドラッグ関連の状態変数をリセット
+    enableControls();       // カメラ操作を有効化
+    document.body.style.cursor = 'default'; // マウスカーソルをデフォルトに戻す
     console.log("[DragHandler] ドラッグ状態をリセットしました。");
 }

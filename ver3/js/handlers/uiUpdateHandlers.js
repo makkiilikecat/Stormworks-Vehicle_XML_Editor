@@ -2,7 +2,7 @@
  * @fileoverview カスタムイベントリスナーを設定し、UIの更新をトリガーする。
  */
 
-import { updateXmlEditUI } from '../ui/xmlEditUI.js'; // パス確認
+import { updateXmlEditUI } from '../ui/xmlEditPanelContent.js'; // パス確認
 import { getCurrentMode, EditMode } from '../state/editMode.js';
 
 /**

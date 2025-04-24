@@ -20,7 +20,7 @@ import { showSelectionBox, hideSelectionBox } from '../rendering/selectionBoxRen
 import { updateGizmos, hideGizmos } from '../rendering/rangeGizmoRenderer.js';
 import { updatePastePreview, clearPastePreview } from '../rendering/pastePreviewRenderer.js';
 import { hasClipboard, getClipboardData } from '../state/clipboardState.js';
-import { updateXmlEditUI } from '../ui/xmlEditUI.js';
+import { updateXmlEditUI } from '../ui/xmlEditPanelContent.js';
 
 // --- モジュール内変数 ---
 
@@ -235,16 +235,15 @@ export function setSelectionRange(box, scene) {
     if (!scene) {
         console.error("[SelectionState] setSelectionRange: Scene が必要です。"); return;
     }
-    // 空のBoxは設定しない（あるいはクリア処理を呼ぶか？）
+    // 空のBoxは設定しない
     if(box.isEmpty()){
         console.warn("[SelectionState] setSelectionRange に空の Box3 が渡されたため、処理をスキップします。");
-        // clearSelectionRange(scene); // クリアしてしまう方が良いかもしれない
         return;
     }
 
     // 内部状態を更新 (クローンを保持)
     currentSelectionRangeBox = box.clone();
-    // console.log("[SelectionState] 選択範囲を更新:", currentSelectionRangeBox.min, currentSelectionRangeBox.max);
+    console.log("[SelectionState] 選択範囲を更新:", currentSelectionRangeBox.min, currentSelectionRangeBox.max);
 
     // 関連する表示を更新
     showSelectionBox(scene, currentSelectionRangeBox); // 選択ボックス表示
@@ -255,10 +254,6 @@ export function setSelectionRange(box, scene) {
         currentSelectionRangeBox.getCenter(_center); // Boxの中心を取得
         updatePastePreview(scene, getClipboardData(), _center.round()); // 整数座標を基準にプレビュー
     }
-
-    // TODO (Step 5 のリアルタイム選択を実装する場合):
-    // このタイミングで範囲内のブロック選択を更新する処理を呼び出す
-    // selectBlocksInCurrentRange(scene, currentSelectionRangeBox);
 }
 
 /**
@@ -274,9 +269,6 @@ export function clearSelectionRange(scene) {
         hideGizmos();
         clearPastePreview(scene); // scene が必要
         console.log("[SelectionState] 選択範囲、ボックス、ギズモ、プレビューをクリアしました。");
-        // TODO (Step 5 のリアルタイム選択を実装する場合):
-        // 範囲選択によるブロック選択もクリアする
-        // setSelectedBlocks([]);
     }
 }
 
