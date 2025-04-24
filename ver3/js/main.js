@@ -5,8 +5,10 @@
  * モジュール間の連携のためのカスタムイベント処理を行います。
  */
 
-// --- Three.js 本体ライブラリ ---
-import * as THREE from 'three';
+
+//webpackが認識するため
+import * as THREE from 'three'; // Three.js をインポート
+import '../css/style.css'; // CSSファイルをインポート
 
 // --- セットアップ関連モジュール ---
 // シーン、カメラ、レンダラー、ライトなどの基本的な3D環境を設定
@@ -53,6 +55,7 @@ import { hidePreviewBlock } from './rendering/previewBlock.js';
 import { initializeEventListeners, setApplicationState } from './events/eventManager.js';
 // 画面左下の仮想スティックによるカメラ移動処理を初期化・実行
 import { initializeCameraStick, updateCameraPosition } from './interactions/cameraStickHandler.js';
+
 
 // === グローバルアプリケーション状態 ===
 /**

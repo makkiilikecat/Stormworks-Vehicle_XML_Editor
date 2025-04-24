@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { getSelectionRangeBox } from '../interactions/selectionState.js';
 import { getBlocksInBox } from '../interactions/interactionUtils.js'; // 範囲内ブロック取得
 import { setClipboardData, clearClipboardData, getClipboardData, hasClipboard } from '../state/clipboardState.js'; // クリップボード状態操作
-// placeBlock をインポート
+// ★ 修正: placeBlock をインポート
 import { deleteBlock, placeBlock } from '../interactions/blockActions.js'; // カット時の削除、ペースト時の配置
 import { addAction } from '../state/historyManager.js'; // カット、ペースト操作の履歴登録
 import { BlockData } from '../data/blockData.js'; // アンドゥ情報作成用

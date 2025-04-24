@@ -56,7 +56,7 @@ export function handlePointerDown(event, appState) {
             const currentRange = getSelectionRangeBox();
             let newBox;
             const targetPos = clickedBlockData.position.clone().round();
-            // クリックされたブロックのバウンディングボックスを作成
+            // ★ 修正: クリックされたブロックのバウンディングボックスを作成
             const blockAABB = new THREE.Box3().setFromCenterAndSize(targetPos, _v1.set(1, 1, 1));
 
             if (ctrlPressed) {
@@ -64,10 +64,10 @@ export function handlePointerDown(event, appState) {
                 newBox = blockAABB; // blockAABB をそのまま使う
             } else { // Shift pressed
                 if (currentRange) {
-                    // 現在の範囲とブロックのボックスを結合
+                    // ★ 修正: 現在の範囲とブロックのボックスを結合
                     newBox = currentRange.clone().union(blockAABB);
                 } else {
-                    // 既存範囲がない場合は、ブロックのボックスをそのまま使う
+                    // ★ 修正: 既存範囲がない場合は、ブロックのボックスをそのまま使う
                     newBox = blockAABB;
                 }
             }

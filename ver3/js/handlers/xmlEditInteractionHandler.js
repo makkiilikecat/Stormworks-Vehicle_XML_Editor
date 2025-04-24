@@ -70,7 +70,7 @@ export function handlePointerMove(event, appState) {
 /**
  * PointerUpイベント処理 (XML編集モード)。
  * ドラッグ変形操作を終了・確定させます。
- * handleDragTransformPointerUp に appState を渡す。
+ * ★ 修正: handleDragTransformPointerUp に appState を渡す。
  * @param {PointerEvent} event - ポインターイベントオブジェクト。
  * @param {object} appState - アプリケーションの状態オブジェクト (controls, loadedBlocks を含む)。
  */
@@ -86,7 +86,7 @@ export function handlePointerUp(event, appState) {
 /**
  * PointerLeaveイベント処理 (XML編集モード)。
  * ドラッグ変形操作を終了・確定させます（キャンセル扱いではなく確定）。
- * handleDragTransformPointerUp に appState を渡す。
+ * ★ 修正: handleDragTransformPointerUp に appState を渡す。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handlePointerLeave(appState) {

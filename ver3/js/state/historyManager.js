@@ -139,25 +139,20 @@ export function undo() {
 
     // Undo 処理が成功した場合
     if (success) {
-        console.log("[HistoryManager] Undo 成功。シーンを再描画します...");
-        // 1. シーンのメッシュをクリアし、変更後の loadedBlocks 配列に基づいて再描画
-        clearBlocks(currentScene);
-        renderBlocks(currentScene, currentLoadedBlocks);
-
-        // 2. 元に戻したアクションを Redo スタックに積む (やり直しできるように)
+        // 1. 元に戻したアクションを Redo スタックに積む (やり直しできるように)
         redoStack.push(action);
 
-        // 3. XML編集モードの場合、編集キューブの更新とハイライトの再適用
-        if (getCurrentMode() === EditMode.XML_EDIT) {
-            console.log("[HistoryManager] XML編集モードのため、編集キューブとハイライトを更新します。");
-            currentLoadedBlocks.forEach(block => block.updateMeshMatrix()); // 編集キューブの行列更新
-            clearAllHighlights(currentLoadedBlocks, EditMode.XML_EDIT);     // 全ハイライト解除
-            const selectedBlocks = getSelectedBlocks();                     // 現在の選択を取得
-            selectedBlocks.forEach(block => { if (block.foregroundMesh) highlightMesh(block.foregroundMesh); }); // 再ハイライト
-            console.log(`[HistoryManager] ハイライトを再適用 (${selectedBlocks.length}個)。`);
-        }
+        // 2. XML編集モードの場合、編集キューブの更新とハイライトの再適用
+        //if (getCurrentMode() === EditMode.XML_EDIT) {
+        //    console.log("[HistoryManager] XML編集モードのため、編集キューブとハイライトを更新します。");
+        //    currentLoadedBlocks.forEach(block => block.updateMeshMatrix()); // 編集キューブの行列更新
+        //    clearAllHighlights(currentLoadedBlocks, EditMode.XML_EDIT);     // 全ハイライト解除
+        //    const selectedBlocks = getSelectedBlocks();                     // 現在の選択を取得
+        //    selectedBlocks.forEach(block => { if (block.foregroundMesh) highlightMesh(block.foregroundMesh); }); // 再ハイライト
+        //    console.log(`[HistoryManager] ハイライトを再適用 (${selectedBlocks.length}個)。`);
+        //}
 
-        // 4. Undo 完了イベントを発行 (必要なら他のモジュールが購読)
+        // 3. Undo 完了イベントを発行 (必要なら他のモジュールが購読)
         document.dispatchEvent(new CustomEvent('historyundone', { detail: action }));
         console.log(`[HistoryManager] Undo 完了。Redo可能数: ${redoStack.length}`);
 
@@ -190,25 +185,20 @@ export function redo() {
 
     // Redo 処理が成功した場合
     if (success) {
-        console.log("[HistoryManager] Redo 成功。シーンを再描画します...");
-        // 1. シーンのメッシュをクリアし、変更後の loadedBlocks 配列に基づいて再描画
-        clearBlocks(currentScene);
-        renderBlocks(currentScene, currentLoadedBlocks);
-
-        // 2. やり直したアクションを Undo スタックに戻す (再度元に戻せるように)
+        // 1. やり直したアクションを Undo スタックに戻す (再度元に戻せるように)
         undoStack.push(action);
 
-        // 3. XML編集モードの場合、編集キューブの更新とハイライトの再適用
-        if (getCurrentMode() === EditMode.XML_EDIT) {
-            console.log("[HistoryManager] XML編集モードのため、編集キューブとハイライトを更新します。");
-            currentLoadedBlocks.forEach(block => block.updateMeshMatrix()); // 編集キューブの行列更新
-            clearAllHighlights(currentLoadedBlocks, EditMode.XML_EDIT);     // 全ハイライト解除
-            const selectedBlocks = getSelectedBlocks();                     // 現在の選択を取得
-            selectedBlocks.forEach(block => { if (block.foregroundMesh) highlightMesh(block.foregroundMesh); }); // 再ハイライト
-            console.log(`[HistoryManager] ハイライトを再適用 (${selectedBlocks.length}個)。`);
-        }
+        // 2. XML編集モードの場合、編集キューブの更新とハイライトの再適用
+        //if (getCurrentMode() === EditMode.XML_EDIT) {
+        //    console.log("[HistoryManager] XML編集モードのため、編集キューブとハイライトを更新します。");
+        //    currentLoadedBlocks.forEach(block => block.updateMeshMatrix()); // 編集キューブの行列更新
+        //    clearAllHighlights(currentLoadedBlocks, EditMode.XML_EDIT);     // 全ハイライト解除
+        //    const selectedBlocks = getSelectedBlocks();                     // 現在の選択を取得
+        //    selectedBlocks.forEach(block => { if (block.foregroundMesh) highlightMesh(block.foregroundMesh); }); // 再ハイライト
+        //    console.log(`[HistoryManager] ハイライトを再適用 (${selectedBlocks.length}個)。`);
+        //}
 
-        // 4. Redo 完了イベントを発行
+        // 3. Redo 完了イベントを発行
         document.dispatchEvent(new CustomEvent('historyredone', { detail: action }));
         console.log(`[HistoryManager] Redo 完了。Undo可能数: ${undoStack.length}`);
 
