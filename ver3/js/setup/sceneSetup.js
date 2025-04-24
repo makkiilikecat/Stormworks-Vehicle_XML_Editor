@@ -19,7 +19,7 @@ export function setupSceneEnvironment() {
     camera.lookAt(0, 0, 0);
 
     // レンダラーを作成
-    // ★修正: querySelector の ID を新しいHTMLに合わせて変更
+    // querySelector の ID を新しいHTMLに合わせて変更
     const canvas = document.querySelector('#three-canvas');
     // キャンバス要素が見つからない場合のエラーハンドリングを追加
     if (!canvas) {
@@ -35,10 +35,10 @@ export function setupSceneEnvironment() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 
     // ライトを作成
-    const ambientLight = new THREE.AmbientLight(0x808080);
+    const ambientLight = new THREE.AmbientLight(0xa0a0a0);
     scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    directionalLight.position.set(-10, 15, -10); // 位置調整済み
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    directionalLight.position.set(-100, 100, -100); // 位置調整済み
     scene.add(directionalLight);
 
     console.log("[SceneSetup] シーン環境をセットアップしました。");

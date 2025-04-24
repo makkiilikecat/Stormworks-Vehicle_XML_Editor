@@ -1,14 +1,19 @@
 /**
  * @fileoverview 左ツールバー (#left-toolbar) のUI要素（ペイント関連）とインタラクションを管理します。
- * ペイントツール選択、カラーパレット、RGBスライダーなどを扱います。
+ * paintState と連携し、ツール/色選択とUI表示の同期を行います。
+ *
+ * 【主な変更点 v4 (ペイントモード対応 Stage 4.4 Final)】
+ * - paintState との連携を強化し、イベントリスナーによるUI同期処理を確実に実装。
+ * - スライダー操作時、対応するカラーパレットがあればアクティブにする処理を追加。
+ * - 初期化処理を paintState から取得した値で確実に実行するように修正。
  */
 
 // --- 必要なモジュールや関数をインポート ---
-// import { setCurrentPaintTool, setCurrentColor } from '../state/paintState.js'; // ★ 将来的に paintState からインポート
+import { PaintTool, getCurrentPaintTool, setCurrentPaintTool, getCurrentColor, setCurrentColor } from '../state/paintState.js';
 
 // --- モジュール内変数 ---
 let appState = null;
-let rgbSlidersVisible = false; // RGBスライダー表示状態
+let rgbSlidersVisible = false;
 
 // --- DOM要素キャッシュ ---
 let leftToolbar = null;
@@ -30,6 +35,7 @@ export function initializeLeftToolbar(appStateRef) {
     appState = appStateRef;
 
     // --- DOM要素を取得 ---
+    // (変更なし)
     leftToolbar = document.getElementById('left-toolbar');
     paintToolButtons = leftToolbar?.querySelectorAll('.paint-tool-button');
     colorPaletteContainer = document.getElementById('color-palette-container');
@@ -41,42 +47,39 @@ export function initializeLeftToolbar(appStateRef) {
     sliderB = document.getElementById('slider-b'); valueB = document.getElementById('value-b');
     colorPreview = document.getElementById('color-preview');
 
+    if (!leftToolbar || !paintToolButtons || !colorSwatches || !toggleRgbSlidersButton || !sliderR) {
+        console.error("[LeftToolbarHandler] 必須要素が見つかりません。");
+        return;
+    }
+
     // --- イベントリスナー設定 ---
-    // ペイントツール選択
-    paintToolButtons?.forEach(button => {
+    paintToolButtons.forEach(button => {
         button.addEventListener('click', () => handlePaintToolSelection(button));
     });
-
-    // カラーパレット選択
-    colorSwatches?.forEach(swatch => {
+    colorSwatches.forEach(swatch => {
         swatch.addEventListener('click', () => handleColorSwatchSelection(swatch));
     });
-
-    // RGBスライダー展開
-    toggleRgbSlidersButton?.addEventListener('click', toggleRgbSliders);
-
-    // RGBスライダー操作
+    toggleRgbSlidersButton.addEventListener('click', toggleRgbSliders);
     const rgbSliders = [sliderR, sliderG, sliderB];
     rgbSliders.forEach(slider => {
-        slider?.addEventListener('input', updateColorFromSliders);
+        slider?.addEventListener('input', handleSliderInput);
     });
 
+    // --- paintState の変更をリッスン ---
+    document.addEventListener('painttoolchanged', (event) => updatePaintToolUI(event.detail.newTool));
+    document.addEventListener('paintcolorchanged', (event) => updateColorUI(event.detail.newColor));
+
     // --- 初期状態設定 ---
-    // ペイントツールの初期アクティブ設定 (通常ツールをデフォルトに)
-    paintToolButtons?.forEach(button => {
-        button.classList.toggle('active', button.dataset.paintTool === 'normal');
-    });
-    // カラーパレットの初期アクティブ設定 (最初の色をデフォルトに)
-    if (colorSwatches && colorSwatches.length > 0) {
-        colorSwatches[0].classList.add('active');
-        // 最初の色でスライダー初期化 (失敗してもエラーにならないように)
-        try {
-            updateSlidersFromColor(colorSwatches[0].dataset.color ? `#${colorSwatches[0].dataset.color}` : '#C2C3C7');
-        } catch (e) { console.error("Initial slider update failed:", e); }
-    }
-    // RGBスライダーは初期非表示
+    // paintState から初期値を取得してUIに反映
+    const initialTool = getCurrentPaintTool();
+    updatePaintToolUI(initialTool);
+
+    const initialColor = getCurrentColor();
+    updateColorUI(initialColor); // パレットとスライダーを初期化
+
     if (rgbSlidersContainer) rgbSlidersContainer.style.display = 'none';
-    rgbSlidersVisible = false; // 状態変数も初期化
+    rgbSlidersVisible = false;
+    toggleRgbSlidersButton?.classList.remove('active'); // 初期状態は非アクティブ
 
     console.log("[LeftToolbarHandler] 初期化完了。");
 }
@@ -84,80 +87,110 @@ export function initializeLeftToolbar(appStateRef) {
 /** @private ペイントツール選択ボタンのクリック処理 */
 function handlePaintToolSelection(selectedButton) {
     const tool = selectedButton.dataset.paintTool;
-    paintToolButtons?.forEach(btn => btn.classList.remove('active'));
-    selectedButton.classList.add('active');
-    console.log(`[UI] Paint Tool Selected: ${tool}`);
-    // ★仮実装: 将来的に paintState を更新
-    // setCurrentPaintTool(tool);
+    setCurrentPaintTool(tool); // paintState を更新
 }
 
 /** @private カラーパレットの色見本ボタンのクリック処理 */
 function handleColorSwatchSelection(selectedSwatch) {
     const color = selectedSwatch.dataset.color;
-    colorSwatches?.forEach(sw => sw.classList.remove('active'));
-    selectedSwatch.classList.add('active');
-    console.log(`[UI] Palette Color Selected: #${color}`);
-    // ★仮実装: 将来的に paintState を更新
-    // setCurrentColor(`#${color}`);
-    // スライダーも更新
-    try {
-        updateSlidersFromColor(`#${color}`);
-    } catch (e) { console.error("Slider update from swatch failed:", e); }
+    if (color) {
+        setCurrentColor(color); // paintState を更新
+    }
 }
 
-/** @private RGBスライダーの表示/非表示を切り替える */
+/** @private RGBスライダーの input イベントハンドラ */
+function handleSliderInput() {
+    if (!sliderR || !sliderG || !sliderB) return;
+    const r = parseInt(sliderR.value, 10);
+    const g = parseInt(sliderG.value, 10);
+    const b = parseInt(sliderB.value, 10);
+    const hexColor = `${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+    // paintState を更新 (これにより 'paintcolorchanged' イベントが発行される)
+    setCurrentColor(hexColor);
+
+    // 値表示とプレビューは即時更新 (イベントを待たない)
+    if(valueR) valueR.textContent = r;
+    if(valueG) valueG.textContent = g;
+    if(valueB) valueB.textContent = b;
+    if(colorPreview) colorPreview.style.backgroundColor = `#${hexColor}`;
+}
+
+/** @private RGBスライダーの表示/非表示を切り替え */
 function toggleRgbSliders() {
     rgbSlidersVisible = !rgbSlidersVisible;
     if (rgbSlidersContainer) {
         rgbSlidersContainer.style.display = rgbSlidersVisible ? 'flex' : 'none';
     }
+    // ボタンのアクティブ状態もトグル
     toggleRgbSlidersButton?.classList.toggle('active', rgbSlidersVisible);
     console.log(`[UI] RGBスライダー表示: ${rgbSlidersVisible}`);
 }
 
-/** @private RGBスライダーの値に基づいて色プレビューと状態を更新 */
-function updateColorFromSliders() {
-    if (!sliderR || !sliderG || !sliderB || !valueR || !valueG || !valueB || !colorPreview) return;
-    const r = parseInt(sliderR.value, 10);
-    const g = parseInt(sliderG.value, 10);
-    const b = parseInt(sliderB.value, 10);
-    valueR.textContent = r; valueG.textContent = g; valueB.textContent = b;
-    const hexColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-    colorPreview.style.backgroundColor = hexColor;
-
-    console.log(`[UI] Slider Color Selected: ${hexColor.toUpperCase()}`);
-    // ★仮実装: 選択色を更新 (将来的に paintState へ)
-    // setCurrentColor(hexColor.toUpperCase());
-
-    // パレットのアクティブ状態を解除
-    colorSwatches?.forEach(sw => sw.classList.remove('active'));
+/**
+ * ペイントツール変更時にUIを更新する (イベントハンドラ)
+ * @param {PaintTool} newTool - 新しく選択されたツール
+ * @private
+ */
+function updatePaintToolUI(newTool) {
+    paintToolButtons?.forEach(button => {
+        button.classList.toggle('active', button.dataset.paintTool === newTool);
+    });
+    // console.log(`[LeftToolbarHandler] Paint tool UI updated: ${newTool}`);
 }
 
-/** @private 指定された色コードでRGBスライダーとプレビューを更新 */
+/**
+ * 選択色変更時にUI (カラーパレット、RGBスライダー、プレビュー) を更新する (イベントハンドラ)
+ * @param {string} newColor - 新しく選択された色コード (6桁16進数、例: "FF0000")
+ * @private
+ */
+function updateColorUI(newColor) {
+    if (!newColor) return;
+    const newColorUpper = newColor.toUpperCase();
+
+    // 1. カラーパレットのアクティブ状態更新
+    let swatchMatches = false;
+    colorSwatches?.forEach(swatch => {
+        const swatchColor = swatch.dataset.color?.toUpperCase();
+        const isActive = swatchColor === newColorUpper;
+        swatch.classList.toggle('active', isActive);
+        if (isActive) swatchMatches = true;
+    });
+
+    // 2. RGBスライダーとプレビュー更新
+    try {
+        updateSlidersFromColor(`#${newColorUpper}`);
+    } catch(e) { console.error("Failed to update sliders from color:", e); }
+
+    // console.log(`[LeftToolbarHandler] Color UI updated: #${newColorUpper}`);
+}
+
+
+/**
+ * 指定された色コードでRGBスライダーとプレビューを更新 (内部ヘルパー)
+ * @param {string} hexColor - 色コード (例: "#FF0000")
+ * @private
+ */
 function updateSlidersFromColor(hexColor) {
-    if (!sliderR || !sliderG || !sliderB || !valueR || !valueG || !valueB || !colorPreview) {
-        console.warn("[updateSlidersFromColor] RGB slider elements not found.");
-        return;
-    }
-    if (!hexColor || !hexColor.startsWith('#') || hexColor.length !== 7) {
-         console.warn("[updateSlidersFromColor] Invalid hexColor format:", hexColor);
-        return;
-    }
+    if (!sliderR || !sliderG || !sliderB || !valueR || !valueG || !valueB || !colorPreview) { return; }
+    if (!hexColor || !hexColor.startsWith('#') || hexColor.length !== 7) { return; }
     try {
         const r = parseInt(hexColor.substring(1, 3), 16);
         const g = parseInt(hexColor.substring(3, 5), 16);
         const b = parseInt(hexColor.substring(5, 7), 16);
         if (isNaN(r) || isNaN(g) || isNaN(b)) throw new Error("Invalid hex value");
+        // スライダーの値と表示テキストを更新
         sliderR.value = r; valueR.textContent = r;
         sliderG.value = g; valueG.textContent = g;
         sliderB.value = b; valueB.textContent = b;
+        // 色プレビューの背景色を更新
         colorPreview.style.backgroundColor = hexColor;
     } catch (e) {
         console.error("[UI] Invalid hex color for slider update:", hexColor, e);
-        // エラー時もデフォルト値などにリセットする？
-        sliderR.value = 194; valueR.textContent = 194; // C2
-        sliderG.value = 195; valueG.textContent = 195; // C3
-        sliderB.value = 199; valueB.textContent = 199; // C7
-        colorPreview.style.backgroundColor = '#C2C3C7';
+        // エラー時はデフォルト値（例：白）などに設定する？
+        sliderR.value = 255; valueR.textContent = 255;
+        sliderG.value = 255; valueG.textContent = 255;
+        sliderB.value = 255; valueB.textContent = 255;
+        colorPreview.style.backgroundColor = '#FFFFFF';
     }
 }

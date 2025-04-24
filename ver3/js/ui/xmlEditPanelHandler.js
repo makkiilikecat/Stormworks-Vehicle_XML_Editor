@@ -31,7 +31,7 @@ for (let r = 0; r < 3; r++) { for (let c = 0; c < 3; c++) { rInputs[`${r}.${c}`]
  * @export
  */
 export function setupXmlEditListeners() {
-    // --- ★修正: 固定入力欄へのリスナー設定を追加 ---
+    // --- 固定入力欄へのリスナー設定を追加 ---
     const fixedInputs = [
         ...Object.values(vpInputs),
         tInput,

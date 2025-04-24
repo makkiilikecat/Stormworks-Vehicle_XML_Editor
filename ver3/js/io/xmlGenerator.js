@@ -70,7 +70,7 @@ export function generateVehicleXml(blockDataArray) {
             const rString = rotationMatrixToXmlElements(blockData.rotationMatrix).join(',');
             oElement.setAttribute('r', rString);
 
-            // ★修正: sc, bc, ac 属性を BlockData から取得して設定
+            // sc, bc, ac 属性を BlockData から取得して設定
             const scString = blockData.getSurfaceColorsString();
             if (scString) { // 空文字列でない場合のみ設定
                 oElement.setAttribute('sc', scString);
@@ -85,7 +85,7 @@ export function generateVehicleXml(blockDataArray) {
             }
             // ---------------------------------------------------
 
-            // ★修正: 保存されている他の<o>属性を、デフォルト値と比較して設定
+            // 保存されている他の<o>属性を、デフォルト値と比較して設定
             // (bc, ac は BlockData の専用プロパティから設定済みなので、oAttributes からは除外される想定)
             blockData.oAttributes.forEach((value, name) => {
                 const propDef = definedProperties.get(name);

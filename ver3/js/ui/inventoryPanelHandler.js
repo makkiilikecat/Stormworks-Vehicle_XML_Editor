@@ -46,13 +46,13 @@ function populateInventory() {
     if (!inventoryContentElement || !itemSelectedCallback) return;
     const definitions = getAllBlockDefinitions(); // ★ getAllBlockDefinitions を使用
     const blocksByTag = {};
-    // ★修正: Object.values で定義オブジェクトを直接ループ
+    // Object.values で定義オブジェクトを直接ループ
     Object.values(definitions).forEach(def => {
         if (def.id === 'default') return; // default は除外 (idプロパティがあると仮定)
         const tags = def.tags && def.tags.length > 0 ? def.tags : ['その他'];
         tags.forEach(tag => {
             if (!blocksByTag[tag]) blocksByTag[tag] = [];
-            // ★修正: idプロパティは既にdefに含まれているはず
+            // idプロパティは既にdefに含まれているはず
             blocksByTag[tag].push(def);
         });
     });
@@ -64,7 +64,7 @@ function populateInventory() {
         const sortedBlocks = blocksByTag[tag].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
         sortedBlocks.forEach(blockDef => {
             const iconHtml = blockDef.icon ? `<span class="icon-text">${blockDef.icon}</span>` : blockDef.name.substring(0, 1);
-            // ★修正: blockDef.id を使用
+            // blockDef.id を使用
             html += `<div class="inventory-item" data-inv-id="${blockDef.id}" title="${blockDef.name}">${iconHtml}</div>`;
         });
         html += `</div></div>`;

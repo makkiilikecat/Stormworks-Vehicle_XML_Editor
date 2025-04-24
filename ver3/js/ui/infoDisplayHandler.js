@@ -5,7 +5,7 @@
  */
 
 import * as THREE from 'three'; // Box3, Vector3のため
-// ★修正: blockDefinitions から必要な関数を直接インポート
+// blockDefinitions から必要な関数を直接インポート
 import { getBlockDefinition } from '../data/blockDefinitions.js';
 
 // --- DOM要素キャッシュ ---

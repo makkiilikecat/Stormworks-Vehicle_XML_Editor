@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<vehicle data_version="3">
+    <authors/>
+    <bodies>
+        <body>
+            <components>
+                <c>
+                    <o r="1,0,0,0,1,0,0,0,1" sc="6,29ADFF,20337B,FFE727,FF77A8,8F0000,FF002B">
+                        <vp x="1"/>
+                    </o>
+                </c>
+                <c d="02_wedge">
+                    <o r="1,0,0,0,1,0,0,0,1" sc="5,x,FF002B,29ADFF,FF77A8,8331">
+                        <vp x="3"/>
+                    </o>
+                </c>
+                <c d="03_pyramid">
+                    <o r="1,0,0,0,1,0,0,0,1" sc="4,FF002B,29ADFF,FF77A8,8331">
+                        <vp x="5"/>
+                    </o>
+                </c>
+                <c d="04_invpyramid">
+                    <o r="1,0,0,0,1,0,0,0,1" sc="7,FF002B,29ADFF,FF77A8,FFE727,x,20337B,8331">
+                        <vp x="7"/>
+                    </o>
+                </c>
+            </components>
+        </body>
+    </bodies>
+    <logic_node_links/>
+</vehicle>

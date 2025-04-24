@@ -161,7 +161,7 @@ function populateDynamicInputs(selectedBlocks) {
 
     const firstBlock = selectedBlocks[0];
     const definition = getBlockDefinition(firstBlock.definitionId);
-    // ★修正: vp, t, r を除外してプロパティ収集
+    // vp, t, r を除外してプロパティ収集
     const propertiesToDisplay = collectProperties(selectedBlocks, definition)
                                  .filter(prop => prop.source !== 'standard'); // 標準プロパティを除外
 
@@ -175,7 +175,7 @@ function populateDynamicInputs(selectedBlocks) {
         if (inputElement) { groups[groupName].push(inputElement); }
     });
 
-    // ★修正: Transform グループは存在しないはずなので除外
+    // Transform グループは存在しないはずなので除外
     const groupOrder = [...Object.keys(groups).filter(g => g !== 'Unknown').sort(), 'Unknown'];
 
     // グループごとにDOMに追加

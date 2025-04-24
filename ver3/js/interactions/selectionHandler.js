@@ -4,7 +4,7 @@
  */
 
 import * as THREE from 'three';
-import { getSelectedBlocks, setSelectedBlocks, clearSelection } from './selectionState.js'; // ← 修正: selectionState からインポート
+import { getSelectedBlocks, setSelectedBlocks, clearSelection } from './selectionState.js';
 import { getCurrentMode, allowsBlockSelection, EditMode } from '../state/editMode.js';
 
 // --- Raycasting用 ---

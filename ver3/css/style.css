@@ -47,7 +47,7 @@ body {
     transition: transform 0.3s ease-in-out; /* 位置変更時のアニメーション */
 }
 
-/* ★新規: 上ツールバー (モード切替など) */
+/* 上ツールバー (モード切替など) */
 #top-toolbar {
     top: 10px;                       /* 画面上端からの距離 */
     left: 50%;                       /* 左から50%の位置 */
@@ -56,7 +56,7 @@ body {
     gap: 10px;                       /* ボタン間の隙間 */
 }
 
-/* ★修正: 左ツールバー (ペイントツール、カラーパレット) */
+/* 左ツールバー (ペイントツール、カラーパレット) */
 #left-toolbar {
     left: 10px;                      /* 画面左端からの距離 */
     top: 50%;                        /* 上から50%の位置 */
@@ -120,7 +120,7 @@ label.toolbar-button /* <label> タグの読込ボタンも対象 */
     vertical-align: middle;          /* 他のボタンとの垂直位置合わせ */
 }
 
-/* ★新規: カラーパレットの色見本ボタンスタイル */
+/* カラーパレットの色見本ボタンスタイル */
 .color-swatch {
     width: 36px;                     /* 幅 */
     height: 36px;                    /* 高さ */
@@ -177,7 +177,15 @@ label.toolbar-button.active /* label も対象 */
     box-shadow: 0 0 8px rgba(74, 144, 226, 0.5); /* 青系の光彩 */
 }
 
-/* ★新規: ペイントツール選択ボタン (.paint-tool-button) のアクティブ色 */
+/* 背景色切替ボタンのアクティブ状態 (ライトテーマ時) */
+#toggle-bg-button.active {
+    background-color: #cccccc; /* 少し明るい背景 */
+    color: #333333;       /* 暗いアイコン色 */
+    border-color: #aaaaaa;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5); /* 白い光彩 */
+}
+
+/* ペイントツール選択ボタン (.paint-tool-button) のアクティブ色 */
 .toolbar-button.paint-tool-button.active {
     background-color: #9013FE; /* 背景色 (紫系) */
     border-color: #b86dfc;
@@ -210,7 +218,7 @@ label.toolbar-button.active /* label も対象 */
 
 #info-display {
     position: fixed;
-    /* ★修正: 上ツールバーを避けるために top を調整 */
+    /* 上ツールバーを避けるために top を調整 */
     top: 75px; /* 例: 上ツールバーの高さ + マージン */
     left: 15px;
     background-color: rgba(0, 0, 0, 0.7); /* 半透明の黒背景 */
@@ -288,7 +296,7 @@ label.toolbar-button.active /* label も対象 */
 
 #xml-edit-panel {
     position: fixed;
-    /* ★修正: 上ツールバーを避けるために top を調整 */
+    /* 上ツールバーを避けるために top を調整 */
     top: 75px; /* 例: 上ツールバーの高さ + マージン */
     right: 88px;            /* 右ツールバーを避ける */
     width: 280px;                      /* パネル幅 */
@@ -298,7 +306,7 @@ label.toolbar-button.active /* label も対象 */
     border: 1px solid #555;
     color: #eee;
     font-size: 14px;
-    max-height: calc(100vh - 90px);    /* ★修正: 上下のマージン分を考慮 */
+    max-height: calc(100vh - 90px);    /* 上下のマージン分を考慮 */
     overflow: hidden;                  /* 格納時に内部を隠す */
     z-index: 9;                        /* ツールバーより少し後ろ */
     box-shadow: 0 2px 5px rgba(0,0,0,0.3);
@@ -336,7 +344,7 @@ label.toolbar-button.active /* label も対象 */
 .matrix3x3-input div { display: flex; flex-direction: column; gap: 4px; }
 .matrix3x3-input input[type="number"] { width: 100%; box-sizing: border-box; text-align: right; padding: 3px; }
 /* 動的プロパティコンテナ */
-.dynamic-props-container { max-height: 35vh; /* ★修正: 高さを少し調整 */ overflow-y: auto; padding-right: 5px; margin-top: 10px; }
+.dynamic-props-container { max-height: 35vh; /* 高さを少し調整 */ overflow-y: auto; padding-right: 5px; margin-top: 10px; }
 /* 動的プロパティの各行 */
 .property-input-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
 .property-input-row label { grid-column: 1 / 2; text-align: right; font-size: 0.9em; color: #bbb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -400,7 +408,7 @@ label.toolbar-button.active /* label も対象 */
 .toolbar hr.vertical-divider { /* (変更なし) */ }
 
 /* ==========================================================================
-   13. ★新規: 左ツールバーのペイント関連スタイル
+   13. 左ツールバーのペイント関連スタイル
    ========================================================================== */
 
 /* カラーパレットコンテナ */

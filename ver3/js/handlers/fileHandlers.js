@@ -19,7 +19,7 @@
  * - data/blockDefinitions.js: (直接は使用せず、infoDisplayHandler経由)
  */
 
-// --- ★修正: 必要なモジュールを分割後のファイルからインポート ---
+// --- 必要なモジュールを分割後のファイルからインポート ---
 import { loadFileAsText } from '../io/fileLoader.js';
 import { parseVehicleXml } from '../io/xmlParser.js';
 import { generateVehicleXml } from '../io/xmlGenerator.js';

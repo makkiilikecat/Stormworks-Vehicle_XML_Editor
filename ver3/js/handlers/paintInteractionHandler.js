@@ -1,145 +1,135 @@
 /**
- * @fileoverview ペイントモード (EditMode.PAINT) におけるマウス/ポインターイベントの処理を担当します。
- *
- * このハンドラは、ユーザーがペイントモード中にキャンバス上でマウス操作（クリック、ドラッグ）を行った際に、
- * 以下の処理を行います。
- * 1. マウスカーソル下のブロックおよび面を特定します (interactionUtils.js を利用)。
- * 2. 現在選択されているペイントツールと色情報を取得します (paintState.js を利用 - 将来実装)。
- * 3. 特定されたブロックと面、および選択中のツール/色に基づいて、
- * 実際のペイント処理（BlockDataの更新と履歴登録）を paintActions.js に依頼します。
- * 4. ドラッグによる連続ペイントに対応します。
+ * @fileoverview ペイントモード (EditMode.PAINT) におけるポインターイベント処理を担当します。
+ * マウスのクリックやドラッグに応じて、ブロックの面の特定や色情報の適用を行います。
  */
 
-import * as THREE from 'three'; // 必要に応じて (Vector2 などで使用される可能性があるため残す)
-import { getMouseNDCFromEvent } from './mouseInteractionHandler.js'; // マウス座標取得ヘルパー
-// ★注意: getIntersectedBlockFaceInfo は interactionUtils.js に別途実装が必要です
-import { getIntersectedBlockFaceInfo } from '../interactions/interactionUtils.js'; // ブロックと面インデックスを取得する関数
-// import { getCurrentPaintTool, getCurrentColor } from '../state/paintState.js'; // ★未実装: 現在のペイントツールと色を取得する関数
-import { applyPaintNormal } from '../interactions/paintActions.js'; // ★ Stage 3.3で実装: 通常ペイント処理を実行する関数
-// import { applyPaintAdditive, applyPaintReplace } from '../interactions/paintActions.js'; // ★ Stage 4で実装予定
+import * as THREE from 'three'; // Raycaster 等で必要になる可能性
+import { getMouseNDCFromEvent } from './mouseInteractionHandler.js'; // 共通のマウス座標取得関数
+// ★ interactionUtils.js に getIntersectedBlockFaceInfo 関数を別途実装する必要があります
+import { getIntersectedBlockFaceInfo } from '../interactions/interactionUtils.js';
+// ★ paintState.js (未実装) から状態を取得・設定する関数 (仮インポート)
+// import { getCurrentPaintTool, getCurrentColor } from '../state/paintState.js';
+// ★ paintActions.js から実際のペイント処理関数をインポート
+import { applyPaintNormal, applyPaintAdditive, applyPaintReplace } from '../interactions/paintActions.js';
 
-// --- モジュール内変数 ---
-
-/** @type {boolean} マウスボタンが押下され、ドラッグによるペイント操作が有効かを示すフラグ */
+// --- モジュール内変数 (ドラッグペイント用状態) ---
+/** @type {boolean} マウスボタンを押下してペイント操作中かどうか */
 let isPainting = false;
-/** @type {number | null} ドラッグ中に最後にペイント処理が適用されたブロックのID */
+/** @type {number | null} 最後にペイント処理を適用したブロックのID */
 let lastPaintedBlockId = null;
-/** @type {number | null} ドラッグ中に最後にペイント処理が適用された面のインデックス (ジオメトリ依存) */
+/** @type {number | null} 最後にペイント処理を適用した面のインデックス (ジオメトリ依存) */
 let lastPaintedFaceIndex = null;
 
 /**
  * PointerDownイベント処理 (ペイントモード)
- *
- * マウスボタンが押されたときに呼び出されます。
- * 1. クリック位置にあるブロックの面を特定します。
- * 2. 特定された面に、選択中のツールと色でペイント処理を実行します。
- * 3. ドラッグによる連続ペイントを開始できるように状態を初期化します。
- *
- * @param {PointerEvent} event - ポインターダウンイベントオブジェクト。
- * @param {object} appState - アプリケーションの状態オブジェクト (カメラ、レンダラー、ブロックリストを含む)。
+ * クリックされたブロックと面を特定し、選択中のツールに応じたペイント処理を開始します。
+ * 通常ツールと特殊ツールの場合は、ドラッグペイント状態を開始します。
+ * @param {PointerEvent} event - ポインターイベントオブジェクト。
+ * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handlePointerDown(event, appState) {
     // console.log("[PaintInteraction] PointerDown");
 
-    // マウス座標を正規化デバイス座標(-1 ~ +1)に変換
+    // 1. クリック位置から Raycasting でブロックと面を特定
     const mouseNDC = getMouseNDCFromEvent(event, appState.renderer.domElement);
-    // マウスカーソル直下のブロックと面の情報を取得
-    // ★注意: getIntersectedBlockFaceInfo は interactionUtils.js に別途実装が必要です
+    // ★ interactionUtils.js に実装が必要な関数
     const intersection = getIntersectedBlockFaceInfo ? getIntersectedBlockFaceInfo(mouseNDC, appState.camera, appState.loadedBlocks) : null;
 
-    // ブロックの面にヒットしなかった場合は処理終了
+    // 面にヒットしなかったら処理終了
     if (!intersection) {
         // console.log("[PaintInteraction] No block face intersected.");
         return;
     }
 
-    // 交差したブロックデータと面のインデックスを取得
     const { blockData, faceIndex } = intersection;
-    // console.log(`[PaintInteraction] Intersected Block ID: ${blockData.id}, Face Index: ${faceIndex}`);
 
-    // --- ペイント処理の実行 ---
-    // ★未実装: 現在のペイントツールと色を paintState から取得する必要があります
-    const currentTool = 'normal'; // 仮に 'normal' 固定
-    const currentColor = 'FF0000'; // 仮に赤色 ("FF0000") 固定。実際の色の取得処理が必要です。
-    // const currentTool = getCurrentPaintTool();
-    // const currentColor = getCurrentColor();
+    // 2. ペイント処理を実行
+    // ★ 仮実装: 現在のツールと色をUIから取得 (本来は paintState から取得)
+    const currentTool = document.querySelector('.paint-tool-button.active')?.dataset.paintTool || 'normal';
+    const currentColor = document.querySelector('.color-swatch.active')?.dataset.color || 'FFFFFF';
+    // const currentTool = getCurrentPaintTool(); // ★ 将来の paintState.js から取得
+    // const currentColor = getCurrentColor();   // ★ 将来の paintState.js から取得
 
-    // 選択中のツールに応じて処理を分岐
-    if (currentTool === 'normal') {
-        // 「通常」ペイントツールの場合: paintActions.js の関数を呼び出す
-        applyPaintNormal(blockData, faceIndex, currentColor);
-    } else if (currentTool === 'special') {
-        // TODO (Stage 4.1): 「特殊」ペイントツールの処理 (Additive Color)
-        // applyPaintAdditive(blockData, currentColor); // 仮の関数呼び出し
-        console.log(`[PaintInteraction] TODO: Apply additive paint ${currentColor} to Block ${blockData.id}`);
-    } else if (currentTool === 'replace') {
-        // TODO (Stage 4.2): 「置き換え」ペイントツールの処理
-        // applyPaintReplace(blockData, faceIndex, currentColor); // 仮の関数呼び出し
-        console.log(`[PaintInteraction] TODO: Apply replace paint ${currentColor} to Block ${blockData.id}, Face ${faceIndex}`);
+    let initiateDragPainting = false; // ドラッグペイントを開始するかどうか
+
+    switch (currentTool) {
+        case 'normal':
+            applyPaintNormal(blockData, faceIndex, currentColor);
+            initiateDragPainting = true; // 通常ツールはドラッグペイント有効
+            break;
+        case 'special':
+            applyPaintAdditive(blockData, currentColor);
+            initiateDragPainting = true; // 特殊ツールもドラッグペイント有効（同じブロックはスキップされる）
+            break;
+        case 'replace':
+            // 置き換えツールはクリック時のみ実行
+            applyPaintReplace(blockData, faceIndex, currentColor, appState.loadedBlocks);
+            initiateDragPainting = false;
+            break;
+        default:
+            console.warn(`[PaintInteraction] 未知のペイントツール: ${currentTool}`);
+            break;
     }
-    // ------------------------
 
-    // ドラッグペイント状態を開始
-    isPainting = true;
-    // 最後にペイントしたブロックと面を記録 (連続ペイント防止用)
-    lastPaintedBlockId = blockData.id;
-    lastPaintedFaceIndex = faceIndex;
+    // 3. ドラッグペイント用の状態を初期化 (必要な場合)
+    if (initiateDragPainting) {
+        isPainting = true;
+        lastPaintedBlockId = blockData.id;
+        lastPaintedFaceIndex = faceIndex;
+    } else {
+        isPainting = false; // 置き換えツールなどはドラッグしない
+        lastPaintedBlockId = null;
+        lastPaintedFaceIndex = null;
+    }
 
-    // 他のインタラクション（カメラ操作など）が動作しないようにイベントの伝播を停止
+    // イベントの伝播を止める (カメラコントロールなどを抑制)
     event.stopPropagation();
 }
 
 /**
  * PointerMoveイベント処理 (ペイントモード)
- *
- * マウスが移動したときに呼び出されます (マウスボタンが押されている間)。
- * 1. isPainting フラグが true の場合のみ処理を実行します。
- * 2. マウスカーソル下のブロックと面を特定します。
- * 3. カーソル下の面が、最後にペイントした面と異なる場合にのみ、
- * 新しい面にペイント処理を実行します (ドラッグによる連続描画)。
- *
- * @param {PointerEvent} event - ポインタームーブイベントオブジェクト。
+ * isPainting が true の場合、ドラッグ中に新しい面にポインターが移動したら、
+ * その面に選択中のツール（通常または特殊）に応じたペイント処理を実行します。
+ * @param {PointerEvent} event - ポインターイベントオブジェクト。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handlePointerMove(event, appState) {
-    // マウスボタンが押されていない (ドラッグ中でない) 場合は何もしない
+    // isPainting フラグが false (ドラッグ中でない、または置き換えツール使用時) なら何もしない
     if (!isPainting) return;
 
-    // 現在のマウスカーソル位置でブロックと面を特定
+    // 1. 現在のポインター位置でブロックと面を特定
     const mouseNDC = getMouseNDCFromEvent(event, appState.renderer.domElement);
     const intersection = getIntersectedBlockFaceInfo ? getIntersectedBlockFaceInfo(mouseNDC, appState.camera, appState.loadedBlocks) : null;
 
-    // ブロックの面にヒットした場合
     if (intersection) {
         const { blockData, faceIndex } = intersection;
 
-        // 最後にペイントしたブロックIDまたは面インデックスが異なる場合のみ処理
-        // (同じ面の上を何度もドラッグしても、一度しかペイントされないようにするため)
+        // 2. 最後にペイントした面と異なる場合のみペイント実行
         if (blockData.id !== lastPaintedBlockId || faceIndex !== lastPaintedFaceIndex) {
-            // console.log(`[PaintInteraction] Drag Paint - Block ID: ${blockData.id}, Face Index: ${faceIndex}`);
 
-            // --- ペイント処理の実行 ---
-            // ★未実装: 現在のペイントツールと色を paintState から取得する必要があります
-            const currentTool = 'normal'; // 仮に 'normal' 固定
-            const currentColor = 'FF0000'; // 仮に赤色固定
+            // ★ 仮実装: 現在のツールと色を取得
+            const currentTool = document.querySelector('.paint-tool-button.active')?.dataset.paintTool || 'normal';
+            const currentColor = document.querySelector('.color-swatch.active')?.dataset.color || 'FFFFFF';
             // const currentTool = getCurrentPaintTool();
             // const currentColor = getCurrentColor();
 
+            // 3. ツールに応じたペイント処理を実行 (Replace はドラッグしないので除外)
             if (currentTool === 'normal') {
                 applyPaintNormal(blockData, faceIndex, currentColor);
             } else if (currentTool === 'special') {
-                 // TODO (Stage 4.1)
-            } else if (currentTool === 'replace') {
-                // TODO (Stage 4.2)
+                // Additive はブロック単位なので、ブロックIDが変わった場合のみ適用
+                if (blockData.id !== lastPaintedBlockId) {
+                    applyPaintAdditive(blockData, currentColor);
+                }
             }
-            // ------------------------
+            // -----------------
 
-            // 最後にペイントした情報を更新
+            // 最後にペイントした面情報を更新
             lastPaintedBlockId = blockData.id;
             lastPaintedFaceIndex = faceIndex;
         }
     } else {
-        // カーソルがブロックから外れたら、最後のペイント情報をリセット
+        // ドラッグ中にブロックから外れたら、最後の情報をリセット
         lastPaintedBlockId = null;
         lastPaintedFaceIndex = null;
     }
@@ -147,16 +137,12 @@ export function handlePointerMove(event, appState) {
 
 /**
  * PointerUpイベント処理 (ペイントモード)
- *
- * マウスボタンが離されたときに呼び出されます。
  * ドラッグペイント状態を終了します。
- *
- * @param {PointerEvent} event - ポインターアップイベントオブジェクト。
+ * @param {PointerEvent} event - ポインターイベントオブジェクト。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handlePointerUp(event, appState) {
-    // isPainting フラグが false なら (ドラッグ中でなかったら) 何もしない
-    if (!isPainting) return;
+    if (!isPainting) return; // ペイント中でなければ何もしない
     // console.log("[PaintInteraction] PointerUp - Painting finished");
 
     // ドラッグ状態をリセット
@@ -164,23 +150,19 @@ export function handlePointerUp(event, appState) {
     lastPaintedBlockId = null;
     lastPaintedFaceIndex = null;
 
-    // TODO (Phase 3.4 / 4):
-    // ドラッグ中に複数のペイント操作が行われた場合、
-    // これらを一つのアクションとしてアンドゥ履歴に登録する処理が必要かもしれません。
-    // (現状では各ペイント操作が個別に履歴登録されています)
+    // ★ TODO (Phase 3.4 補完):
+    // ドラッグ中の一連のペイント操作を一つのアクションとしてアンドゥ履歴に登録する場合、
+    // PointerDownで一時的な変更リストを開始し、ここでまとめてaddActionを呼び出すなどの工夫が必要。
+    // 現状は PointerDown/Move の各 applyPaintXXX 内で個別に履歴登録されている。
 }
 
 /**
  * PointerLeaveイベント処理 (ペイントモード)
- *
- * マウスカーソルがキャンバス領域から外れたときに呼び出されます。
- * ドラッグペイント状態を中断・終了します。
- *
+ * キャンバス外にポインターが出た場合にドラッグペイント状態を終了します。
  * @param {object} appState - アプリケーションの状態オブジェクト。
  */
 export function handlePointerLeave(appState) {
-    // isPainting フラグが false なら (ドラッグ中でなかったら) 何もしない
-    if (!isPainting) return;
+    if (!isPainting) return; // ペイント中でなければ何もしない
     // console.log("[PaintInteraction] PointerLeave - Painting cancelled/finished");
 
     // ドラッグ状態をリセット
@@ -188,5 +170,5 @@ export function handlePointerLeave(appState) {
     lastPaintedBlockId = null;
     lastPaintedFaceIndex = null;
 
-    // TODO (Phase 3.4 / 4): PointerUp と同様に、アンドゥ履歴の扱いを検討。
+    // ★ TODO (Phase 3.4 補完): PointerUpと同様にアンドゥ履歴の扱いを検討。
 }

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { getMouseNDCFromEvent } from './mouseInteractionHandler.js';
 import { getSelectedBlocks, getSelectionRangeBox, setSelectionRange } from '../interactions/selectionState.js';
 import { getIntersectedBlockData } from './interactionUtils.js';
-// ★修正: rangeDragState のインポートを確認
+// rangeDragState のインポートを確認
 import { rangeDragState, beginGizmoDrag, updateGizmoDrag, endGizmoDrag } from '../interactions/rangeDragState.js';
 import { getGizmoGroup } from '../rendering/rangeGizmoRenderer.js';
 
@@ -32,7 +32,7 @@ export function handlePointerDown(event, appState) {
         const intersects = raycaster.intersectObjects(gizmoGroup.children, true);
         for (const intersect of intersects) {
             const obj = intersect.object;
-            // ★修正: サイズ変更ハンドル (gizmoType === 'resize') の判定を追加
+            // サイズ変更ハンドル (gizmoType === 'resize') の判定を追加
             if (obj.userData.isGizmoHandle) { // ハンドル自体 (球 or サイズハンドル)
                 hitGizmoData = obj.userData;
                 hitPoint = intersect.point;
@@ -56,7 +56,7 @@ export function handlePointerDown(event, appState) {
             const currentRange = getSelectionRangeBox();
             let newBox;
             const targetPos = clickedBlockData.position.clone().round();
-            // ★ 修正: クリックされたブロックのバウンディングボックスを作成
+            // クリックされたブロックのバウンディングボックスを作成
             const blockAABB = new THREE.Box3().setFromCenterAndSize(targetPos, _v1.set(1, 1, 1));
 
             if (ctrlPressed) {
@@ -64,10 +64,10 @@ export function handlePointerDown(event, appState) {
                 newBox = blockAABB; // blockAABB をそのまま使う
             } else { // Shift pressed
                 if (currentRange) {
-                    // ★ 修正: 現在の範囲とブロックのボックスを結合
+                    // 現在の範囲とブロックのボックスを結合
                     newBox = currentRange.clone().union(blockAABB);
                 } else {
-                    // ★ 修正: 既存範囲がない場合は、ブロックのボックスをそのまま使う
+                    // 既存範囲がない場合は、ブロックのボックスをそのまま使う
                     newBox = blockAABB;
                 }
             }

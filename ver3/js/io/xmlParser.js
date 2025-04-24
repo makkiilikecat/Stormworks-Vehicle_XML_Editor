@@ -87,7 +87,7 @@ export function parseVehicleXml(xmlString) {
         }
 
         try {
-             // --- BlockDataインスタンス生成 (★修正: sc, bc, ac を引数に追加) ---
+             // --- BlockDataインスタンス生成 (sc, bc, ac を引数に追加) ---
              blocks.push(new BlockData(
                  definitionId, positionXml, rotationString,
                  scString, bcString, acString, // ★色情報を渡す

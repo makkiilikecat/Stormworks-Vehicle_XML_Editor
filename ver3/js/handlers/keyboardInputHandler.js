@@ -19,7 +19,7 @@ import { updatePastePreview } from '../rendering/pastePreviewRenderer.js'; // �
 
 // --- インタラクションモジュールのインポート ---
 import { applyRotation, applyFlip, transformGroup } from '../interactions/rotationHandler.js'; // 回転・反転処理
-// ★修正: swapSelectionRangeAxes も selectionState からインポート
+// swapSelectionRangeAxes も selectionState からインポート
 import { getSelectedBlocks, getSelectionRangeBox, swapSelectionRangeAxes } from '../interactions/selectionState.js'; // 選択ブロック取得、範囲取得、範囲サイズ入れ替え
 
 // --- モジュール内変数 ---

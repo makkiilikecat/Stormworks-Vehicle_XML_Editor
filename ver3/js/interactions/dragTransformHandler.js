@@ -263,7 +263,7 @@ export function handleDragTransformPointerUp(event, enableControls) {
             newScale             // スケール/せん断
         );
 
-        // 2. ★修正: アンドゥ履歴に BlockData の position/rotationMatrix の変化を登録
+        // 2. アンドゥ履歴に BlockData の position/rotationMatrix の変化を登録
         addAction({
             type: 'TRANSFORM_BLOCKS', // アクションタイプ
             transformations: [{       // 変更内容の配列 (今回は単一ブロック)

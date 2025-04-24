@@ -49,7 +49,7 @@ export const blockDefinitions = {
     '14_invpyramid_2x2': { name: 'Inverse Pyramid 2x2', type: 'invpyramid', size: [2, 1, 2], offset: [-0.5, +0.0, +0.5], cost:  4, mass:    3, tags: ['基本形状', '構造'] },
     '15_invpyramid_2x4': { name: 'Inverse Pyramid 2x4', type: 'invpyramid', size: [4, 1, 2], offset: [-0.5, +0.0, +1.5], cost:  8, mass:    6, tags: ['基本形状', '構造'] },
     '16_invpyramid_4x4': { name: 'Inverse Pyramid 4x4', type: 'invpyramid', size: [4, 1, 4], offset: [+0.5, -0.5, -0.5], cost: 16, mass:   12, tags: ['基本形状', '構造'] },
-
+    /*
     // --- ロボティクス (デモ用プロパティ追加) ---
     'multibody_compact_pivot_robotic_a': {
         name: 'Robotic Pivot (Compact)',
@@ -86,6 +86,7 @@ export const blockDefinitions = {
     'light':             { name: 'Light',               type: 'cube',       size: [1, 1, 1], offset: [0, 0, 0], cost: 10, mass: 0.1, tags: ['機能', '照明'], icon: '💡' },
     'button':            { name: 'Button',              type: 'cube',       size: [1, 1, 1], offset: [0, 0, 0], cost: 5, mass: 0.1, tags: ['機能', 'インタラクション'], icon: '🔘' },
     'seat_pilot':        { name: 'Pilot Seat',          type: 'cube',       size: [1, 2, 2], offset: [0, -0.5, -0.5], cost: 50, mass: 5, tags: ['機能', '座席'], icon: '💺' },
+    */
 
     // --- デフォルト ---
     'default':           { name: 'Unknown Block',       type: 'unknown_cube', size: [1, 1, 1], offset: [0, 0, 0], cost: 0, mass: 0, tags: ['その他'], icon: '❓' }

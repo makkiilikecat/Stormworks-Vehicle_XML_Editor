@@ -16,7 +16,7 @@ export function setupHelpers(scene) {
         gridSize,
         gridDivisions,
         0x888888, // 中央線は少し濃い灰色
-        0x666666  // グリッド線は灰色
+        0x707070  // グリッド線は灰色
     );
     // グリッドはY=0の平面に配置される
     scene.add(gridHelper);

@@ -1,6 +1,10 @@
 /**
  * @fileoverview ブロックに対する主要な編集アクション（配置、削除）を実装します。
  * 対称編集とアンドゥ・リドゥのための履歴登録も考慮します。
+ *
+ * 【主な変更点 v4.1】
+ * - placeBlock 内の new BlockData 呼び出しで scString に null を渡すように修正 (警告抑制)。
+ * - placeBlock 内の履歴登録で colorIndices の代わりに surfaceColors, baseColor, additiveColor を使用するように修正 (エラー修正)。
  */
 
 import * as THREE from 'three';
@@ -16,6 +20,8 @@ import { createBlockMesh } from '../rendering/blockRenderer.js';
 import { getBlockDefinition } from '../data/blockDefinitions.js';
 // 対称編集の状態とヘルパー関数
 import { getActiveSymmetryAxes, getSymmetricPosition, getSymmetricRotation } from '../state/symmetryState.js';
+// ★ 座標変換ユーティリティ (positionToXml が placeBlock で必要)
+import { positionToXml } from '../utils/coordinateConverter.js';
 
 /**
  * 指定された位置と向きで新しいブロックをワークベンチに配置します。
@@ -41,18 +47,24 @@ export function placeBlock(positionThreeJs, orientationMatrix, blockDefinitionId
 
     // --- 2. BlockDataインスタンスの作成 (主ブロック) ---
     // BlockDataコンストラクタはXML座標系を期待するため変換
-    const positionXml = {
-        x: Math.round(positionThreeJs.x),
-        y: Math.round(positionThreeJs.y),
-        z: Math.round(-positionThreeJs.z) // Z座標の符号反転
-    };
+    // ★ positionToXml をインポートして使用
+    const positionXml = positionToXml(positionThreeJs);
+
     // 新しいBlockDataインスタンス生成
     const primaryBlock = new BlockData(
         blockDefinitionId,
         positionXml,
-        null, // rotationStringは不要 (Matrix4で指定)
-        "0",  // colorString (デフォルト)
-        orientationMatrix // 初期向き
+        null, // rotationStringは不要 (initialMatrixで指定)
+        // scString に null を渡す (BlockData側でデフォルト処理される)
+        null, // scString (旧: "0")
+        null, // bcString (デフォルトなし)
+        null, // acString (デフォルトなし)
+        // tAttributeValue も null を渡す (BlockData側でデフォルト0になる)
+        null, // tAttributeValue
+        new Map(), // cAttributes (空)
+        new Map(), // oAttributes (空)
+        [],        // oChildren (空)
+        orientationMatrix // initialMatrix
     );
 
     // --- 3. 内部データ配列への追加 (主ブロック) ---
@@ -61,8 +73,13 @@ export function placeBlock(positionThreeJs, orientationMatrix, blockDefinitionId
     // --- 4. 3Dシーンへのメッシュ追加 (主ブロック) ---
     const primaryMesh = createBlockMesh(primaryBlock); // レンダラーに依頼
     primaryBlock.mesh = primaryMesh; // BlockDataにメッシュ参照を保持
-    scene.add(primaryMesh);           // シーンに追加
-    primaryBlock.updateMeshMatrix(); // 正しい位置・向きに更新
+    if (primaryMesh) { // メッシュ作成に成功した場合のみ追加
+        scene.add(primaryMesh);           // シーンに追加
+        primaryBlock.updateMeshMatrix(); // 正しい位置・向きに更新
+    } else {
+        console.error(`[BlockActions] 主ブロック (ID: ${primaryBlock.id}) のメッシュ作成に失敗しました。`);
+        // エラーの場合、追加した BlockData を取り除くべきか検討
+    }
     console.log(`[BlockActions] 主ブロック配置完了: ID ${primaryBlock.id}, Def: ${primaryBlock.definitionId}`);
 
     // --- 5. 対称編集処理 ---
@@ -109,30 +126,43 @@ export function placeBlock(positionThreeJs, orientationMatrix, blockDefinitionId
     // isHistoryAction が false (＝最初の呼び出し) の場合のみ履歴登録
     if (!isHistoryAction) {
         // 主ブロックと、対称配置で追加された全てのブロックの情報を一つのアクションとして登録
-        const placedBlocksInfo = [primaryBlock, ...symmetricBlocksPlaced].map(block => ({
-            // アンドゥ/リドゥに必要な情報のみをコピーして保存
-            id: block.id,
-            definitionId: block.definitionId,
-            position: block.position.clone(),
-            rotationMatrix: block.rotationMatrix.clone(),
-            colorIndices: [...block.colorIndices],
-            mesh: null, // 参照は含めない
-            foregroundMesh: null
-        }));
+        // 履歴情報に colorIndices の代わりに surfaceColors, baseColor, additiveColor を含める
+        const placedBlocksInfo = [primaryBlock, ...symmetricBlocksPlaced].map(block => {
+            if (!block) return null; // 対称配置失敗などでnullになる可能性を考慮
+            return {
+                // アンドゥ/リドゥに必要な情報のみをコピーして保存
+                id: block.id,
+                definitionId: block.definitionId,
+                position: block.position.clone(),
+                rotationMatrix: block.rotationMatrix.clone(),
+                surfaceColors: [...block.surfaceColors], // ★ surfaceColors をコピー
+                baseColor: block.getBaseColor(),         // ★ baseColor を取得
+                additiveColor: block.getAdditiveColor(), // ★ additiveColor を取得
+                tAttribute: block.tAttribute,            // t属性
+                cAttributes: new Map(block.cAttributes), // Mapもコピー
+                oAttributes: new Map(block.oAttributes), // Mapもコピー
+                oChildren: [...block.oChildren],         // 子要素もコピー
+                mesh: null, // 参照は含めない
+                foregroundMesh: null
+            };
+        }).filter(info => info !== null); // nullを除外
 
-        // 新しいアクションタイプ 'PLACE_SYMMETRY' で登録
-        addAction({
-            type: 'PLACE_SYMMETRY',
-            placedBlocksData: placedBlocksInfo // 追加された全ブロックの情報配列
-        });
-        console.log(`[BlockActions] アンドゥ履歴 'PLACE_SYMMETRY' 登録 (${placedBlocksInfo.length} ブロック)`);
+        // 実際に配置されたブロック情報がある場合のみ履歴登録
+        if (placedBlocksInfo.length > 0) {
+            // 新しいアクションタイプ 'PLACE_SYMMETRY' で登録
+            addAction({
+                type: 'PLACE_SYMMETRY',
+                placedBlocksData: placedBlocksInfo // 追加された全ブロックの情報配列
+            });
+            console.log(`[BlockActions] アンドゥ履歴 'PLACE_SYMMETRY' 登録 (${placedBlocksInfo.length} ブロック)`);
 
-        // --- 7. ブロック変更イベント発行 ---
-        // 他のモジュール(情報表示など)に変更を通知
-        document.dispatchEvent(new CustomEvent('blocksChanged', {
-            detail: { action: 'place_symmetry', count: placedBlocksInfo.length }
-        }));
-        console.log("[BlockActions] 'blocksChanged' イベント発行 (placeBlock - symmetry)");
+            // --- 7. ブロック変更イベント発行 ---
+            // 他のモジュール(情報表示など)に変更を通知
+            document.dispatchEvent(new CustomEvent('blocksChanged', {
+                detail: { action: 'place_symmetry', count: placedBlocksInfo.length }
+            }));
+            console.log("[BlockActions] 'blocksChanged' イベント発行 (placeBlock - symmetry)");
+        }
     }
 
     // 最初に配置した主ブロックの参照を返す
@@ -198,25 +228,31 @@ export function deleteBlock(blockDataToDelete, loadedBlocks, scene, isHistoryAct
         if (blockIdsToDelete.has(block.id)) {
             indicesToRemove.push(index); // 削除するインデックスを記録
             // アンドゥ用情報をディープコピーして保存
+            // ★ 履歴情報に surfaceColors, baseColor, additiveColor を含める
             deletedInfoList.push({
-                id: block.id, definitionId: block.definitionId, position: block.position.clone(),
-                rotationMatrix: block.rotationMatrix.clone(), colorIndices: [...block.colorIndices],
-                mesh: null, foregroundMesh: null
+                id: block.id,
+                definitionId: block.definitionId,
+                position: block.position.clone(),
+                rotationMatrix: block.rotationMatrix.clone(),
+                surfaceColors: [...block.surfaceColors], // ★ surfaceColors をコピー
+                baseColor: block.getBaseColor(),         // ★ baseColor を取得
+                additiveColor: block.getAdditiveColor(), // ★ additiveColor を取得
+                tAttribute: block.tAttribute,
+                cAttributes: new Map(block.cAttributes),
+                oAttributes: new Map(block.oAttributes),
+                oChildren: [...block.oChildren],
+                mesh: null, // 参照は含めない
+                foregroundMesh: null
             });
             // メッシュをシーンから削除 & リソース破棄
             if (block.mesh && block.mesh.parent) {
                 scene.remove(block.mesh);
-                if (block.mesh.material && typeof block.mesh.material.dispose === 'function') {
-                    const matName = block.mesh.material.name || '';
-                    if(matName !== 'unknownMaterial' && !matName.includes('Base')) { /* Dispose */ }
-                }
+                // マテリアルやジオメトリの破棄は blockRenderer.js に任せる方が一貫性があるかもしれない
                 block.mesh = null;
             }
             if (block.foregroundMesh && block.foregroundMesh.parent) {
                 scene.remove(block.foregroundMesh);
-                if (block.foregroundMesh.material && typeof block.foregroundMesh.material.dispose === 'function') {
-                    block.foregroundMesh.material.dispose();
-                }
+                // マテリアル破棄は blockRenderer.js 側に？
                 block.foregroundMesh = null;
             }
             deletedCount++; // 削除カウンターを増やす

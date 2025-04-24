@@ -120,7 +120,7 @@ export function updateCameraPosition() {
 
         _moveVector.set(0, 0, 0)
             .addScaledVector(_forwardVector, -moveYNormalized * MOVE_SPEED_FACTOR) // 前後 (変更なし)
-            // ★修正: 左右移動の係数の符号を反転 (-moveXNormalized にする)
+            // 左右移動の係数の符号を反転 (-moveXNormalized にする)
             .addScaledVector(_rightVector, -moveXNormalized * MOVE_SPEED_FACTOR);   // 左右
 
         appState.camera.position.add(_moveVector);
