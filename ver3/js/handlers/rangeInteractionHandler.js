@@ -47,39 +47,42 @@ export function handlePointerDown(event, appState) {
         }
     }
 
-    if (hitGizmoData) {
+
+    const ctrlPressed = event.ctrlKey || event.metaKey;
+    const shiftPressed = event.shiftKey;
+    if (ctrlPressed || shiftPressed) {
+        const clickedBlockData = getIntersectedBlockData(event, appState);
+        if (clickedBlockData) {
+            const currentRange = getSelectionRangeBox();
+            let newBox;
+            const targetPos = clickedBlockData.position.clone().round();
+            // ★ 修正: クリックされたブロックのバウンディングボックスを作成
+            const blockAABB = new THREE.Box3().setFromCenterAndSize(targetPos, _v1.set(1, 1, 1));
+
+            if (ctrlPressed) {
+                // Ctrl: クリックしたブロック単体を選択範囲とする (既存の newBox のロジックでOK)
+                newBox = blockAABB; // blockAABB をそのまま使う
+            } else { // Shift pressed
+                if (currentRange) {
+                    // ★ 修正: 現在の範囲とブロックのボックスを結合
+                    newBox = currentRange.clone().union(blockAABB);
+                } else {
+                    // ★ 修正: 既存範囲がない場合は、ブロックのボックスをそのまま使う
+                    newBox = blockAABB;
+                }
+            }
+            setSelectionRange(newBox, appState.scene);
+            event.stopPropagation(); // ★ 追加: 他のイベントが発火しないように
+            return; // ★ 追加: 処理を終了
+        }
+    } else if (hitGizmoData) { // ギズモ操作の場合は以下を継続
         // ギズモにヒットした場合 -> ドラッグ開始
         beginGizmoDrag(hitGizmoData, hitPoint, appState);
         event.stopPropagation();
         return;
-    } else {
-        // ギズモ以外をクリックした場合 (Ctrl/Shift処理)
-        // ... (変更なし) ...
-        const ctrlPressed = event.ctrlKey || event.metaKey;
-        const shiftPressed = event.shiftKey;
-        if (ctrlPressed || shiftPressed) {
-            const clickedBlockData = getIntersectedBlockData(event, appState);
-            if (clickedBlockData) {
-                const currentRange = getSelectionRangeBox();
-                let newBox;
-                const targetPos = clickedBlockData.position.clone().round();
-                if (ctrlPressed) {
-                    newBox = _tempBox.setFromCenterAndSize(targetPos, _v1.set(1, 1, 1));
-                } else { // Shift pressed
-                    if (currentRange) {
-                        newBox = currentRange.clone().expandByPoint(targetPos);
-                    } else {
-                        newBox = _tempBox.setFromCenterAndSize(targetPos, _v1.set(1, 1, 1));
-                    }
-                }
-                setSelectionRange(newBox, appState.scene);
-                event.stopPropagation();
-                return;
-            }
-        }
-        console.log("[RangeInteraction] 背景またはギズモ以外をクリック。");
-        return;
     }
+    console.log("[RangeInteraction] 背景またはギズモ以外をクリック。");
+    return;
 }
 
 /**
