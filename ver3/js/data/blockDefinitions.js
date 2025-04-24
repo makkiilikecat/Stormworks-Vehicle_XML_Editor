@@ -5,31 +5,9 @@
  * 【主な変更点】
  * - ユーザー提供の最新定義に更新。
  * - 一部のブロックに properties 配列を追加 (デモ用)。
- * @fileoverview ブロック定義データを提供します。
- * 各ブロックのID、名前、ジオメトリタイプ、サイズ、物理特性、タグ、アイコン、
- * そしてXML編集用のプロパティ定義を含みます。
- * 【主な変更点】
- * - ユーザー提供の最新定義に更新。
- * - 一部のブロックに properties 配列を追加 (デモ用)。
  */
 
 /**
- * 各ブロックの定義情報。
- * id: ブロックのXML 'd' 属性 (存在しない場合はキー自体を使用)
- * name: 表示名
- * type: プロシージャルメッシュ生成用の形状タイプ ('cube', 'wedge', 'pyramid', 'invpyramid', 'unknown_cube')
- * size: [width, height, depth] (Three.js座標系、プロシージャルメッシュ用)
- * offset: [x, y, z] (Three.js座標系、モデル中心から回転中心までのオフセット)
- * cost: コスト
- * mass: 質量
- * tags: ['カテゴリ', 'サブカテゴリ', ...] (インベントリフィルタリング用)
- * icon: インベントリ表示用アイコン (絵文字など)
- * properties: (オプション) XML編集パネルで編集可能なプロパティ定義の配列
- * - name: string - XML属性名
- * - type: 'string' | 'number' | 'boolean' - データ型
- * - defaultValue: string | number | boolean - Stormworksにおけるデフォルト値
- * - source: 'c' | 'o' - 属性が存在するXML要素 (<c> または <o>)
- * - group: string - UIでの表示グループ名
  * 各ブロックの定義情報。
  * id: ブロックのXML 'd' 属性 (存在しない場合はキー自体を使用)
  * name: 表示名
@@ -111,7 +89,6 @@ export const blockDefinitions = {
 
     // --- デフォルト ---
     'default':           { name: 'Unknown Block',       type: 'unknown_cube', size: [1, 1, 1], offset: [0, 0, 0], cost: 0, mass: 0, tags: ['その他'], icon: '❓' }
-    'default':           { name: 'Unknown Block',       type: 'unknown_cube', size: [1, 1, 1], offset: [0, 0, 0], cost: 0, mass: 0, tags: ['その他'], icon: '❓' }
 };
 
 /**
@@ -119,14 +96,7 @@ export const blockDefinitions = {
  * @param {string} definitionId - ブロック定義ID ('d'属性値など)。
  * @param {object} [fallback=blockDefinitions.default] - 見つからなかった場合のフォールバック定義。
  * @returns {object} ブロック定義オブジェクト。
- * ブロックIDに対応する定義を取得します。見つからない場合はデフォルト定義を返します。
- * @param {string} definitionId - ブロック定義ID ('d'属性値など)。
- * @param {object} [fallback=blockDefinitions.default] - 見つからなかった場合のフォールバック定義。
- * @returns {object} ブロック定義オブジェクト。
  */
-export function getBlockDefinition(definitionId, fallback = blockDefinitions.default) {
-    // definitionId が null や undefined の場合も考慮
-    return blockDefinitions[definitionId] || fallback;
 export function getBlockDefinition(definitionId, fallback = blockDefinitions.default) {
     // definitionId が null や undefined の場合も考慮
     return blockDefinitions[definitionId] || fallback;
@@ -135,13 +105,8 @@ export function getBlockDefinition(definitionId, fallback = blockDefinitions.def
 /**
  * 全てのブロック定義を配列として取得します（デフォルト定義を除く）。
  * @returns {object[]} ブロック定義オブジェクトの配列。
- * 全てのブロック定義を配列として取得します（デフォルト定義を除く）。
- * @returns {object[]} ブロック定義オブジェクトの配列。
  */
 export function getAllBlockDefinitions() {
-    return Object.entries(blockDefinitions)
-                 .filter(([key, value]) => key !== 'default') // 'default' エントリを除外
-                 .map(([key, value]) => ({ id: key, ...value })); // キーを 'id' プロパティとして追加
     return Object.entries(blockDefinitions)
                  .filter(([key, value]) => key !== 'default') // 'default' エントリを除外
                  .map(([key, value]) => ({ id: key, ...value })); // キーを 'id' プロパティとして追加
